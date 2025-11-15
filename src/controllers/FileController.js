@@ -7,9 +7,9 @@
 import EventEmitter from '../utils/EventEmitter.js';
 
 export default class FileController extends EventEmitter {
-  constructor(fileSystemService) {
+  constructor(_fileSystemService) {
     super();
-    this.fileSystemService = fileSystemService;
+    this.fileSystemService = _fileSystemService;
     this.root_node = null;
   }
 
@@ -40,21 +40,21 @@ export default class FileController extends EventEmitter {
   /**
    * 파일 열기
    */
-  async openFile(fileNode) {
+  async openFile(_fileNode) {
     try {
-      const content = await this.fileSystemService.readFile(fileNode);
+      const content = await this.fileSystemService.readFile(_fileNode);
 
       this.emit('file-opened', {
-        node: fileNode,
+        node: _fileNode,
         content: content,
-        language: this.#detectLanguage(fileNode),
+        language: this.#detectLanguage(_fileNode),
       });
 
       return content;
     } catch (error) {
       console.error('파일 열기 실패:', error);
       this.emit('error', {
-        message: `파일을 열 수 없습니다: ${fileNode.name}`,
+        message: `파일을 열 수 없습니다: ${_fileNode.name}`,
         error,
       });
       return null;
@@ -62,26 +62,10 @@ export default class FileController extends EventEmitter {
   }
 
   /**
-   * 파일 저장
-   */
-  async saveFile(fileNode, content) {
-    try {
-      await this.fileSystemService.writeFile(fileNode, content);
-      this.emit('file-saved', { node: fileNode });
-    } catch (error) {
-      console.error('파일 저장 실패:', error);
-      this.emit('error', {
-        message: `파일을 저장할 수 없습니다: ${fileNode.name}`,
-        error,
-      });
-    }
-  }
-
-  /**
    * 언어 감지
    */
-  #detectLanguage(fileNode) {
-    const ext = fileNode.getExtension();
+  #detectLanguage(_fileNode) {
+    const ext = _fileNode.getExtension();
     const langMap = {
       '.js': 'javascript',
       '.html': 'html',

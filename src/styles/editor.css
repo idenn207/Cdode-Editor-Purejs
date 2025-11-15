@@ -1,0 +1,70 @@
+/**
+ * 파일: src/styles/editor.css
+ * 기능: 에디터 스타일
+ * 책임: 텍스트 편집기 UI 스타일링
+ */
+
+.editor-pane {
+  display: flex;
+  height: 100%;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.line-numbers {
+  background-color: var(--bg-primary);
+  color: var(--text-secondary);
+  padding: 10px 8px;
+  text-align: right;
+  user-select: none;
+  border-right: 1px solid var(--border-color);
+  min-width: 50px;
+}
+
+.line-number {
+  height: 22.4px; /* line-height: 1.6 * 14px */
+  font-size: 13px;
+}
+
+.editor-content {
+  flex: 1;
+  padding: 10px 16px;
+  outline: none;
+  overflow-y: auto;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.editor-content:focus {
+  outline: none;
+}
+
+.code-line {
+  min-height: 22.4px;
+  white-space: pre;
+}
+
+.empty-editor {
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 40px 20px;
+  font-size: 14px;
+}
+
+/* 커서 스타일 */
+.editor-content::selection {
+  background-color: var(--bg-active);
+}
+
+/* 스크롤바 동기화를 위한 스타일 */
+.line-numbers,
+.editor-content {
+  overflow-y: auto;
+}
+
+.line-numbers::-webkit-scrollbar {
+  width: 0;
+}

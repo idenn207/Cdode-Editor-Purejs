@@ -1,5 +1,7 @@
 # CodeEidtor Technical Document
 
+현재 구현 내용은 project-decisions-\*.md 파일을 참고하기
+
 ## 기술 스택
 
 - html 5

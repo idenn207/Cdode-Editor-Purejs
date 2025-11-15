@@ -9,55 +9,38 @@ export default class EventEmitter {
     this._events = {};
   }
 
-  /**
-   * 이벤트 리스너 등록
-   * @param {string} event - 이벤트 이름
-   * @param {Function} listener - 콜백 함수
-   */
-  on(event, listener) {
-    if (!this._events[event]) {
-      this._events[event] = [];
+  on(_event, _listener) {
+    if (!this._events[_event]) {
+      this._events[_event] = [];
     }
-    this._events[event].push(listener);
+    this._events[_event].push(_listener);
   }
 
-  /**
-   * 일회성 이벤트 리스너 등록
-   */
-  once(event, listener) {
-    const onceWrapper = (...args) => {
-      listener(...args);
-      this.off(event, onceWrapper);
+  once(_event, _listener) {
+    const onceWrapper = (..._args) => {
+      _listener(..._args);
+      this.off(_event, onceWrapper);
     };
-    this.on(event, onceWrapper);
+    this.on(_event, onceWrapper);
   }
 
-  /**
-   * 이벤트 리스너 제거
-   */
-  off(event, listenerToRemove) {
-    if (!this._events[event]) return;
+  off(_event, _listenerToRemove) {
+    if (!this._events[_event]) return;
 
-    this._events[event] = this._events[event].filter((listener) => listener !== listenerToRemove);
+    this._events[_event] = this._events[_event].filter((_listener) => _listener !== _listenerToRemove);
   }
 
-  /**
-   * 이벤트 발행
-   */
-  emit(event, ...args) {
-    if (!this._events[event]) return;
+  emit(_event, ..._args) {
+    if (!this._events[_event]) return;
 
-    this._events[event].forEach((listener) => {
-      listener(...args);
+    this._events[_event].forEach((_listener) => {
+      _listener(..._args);
     });
   }
 
-  /**
-   * 모든 리스너 제거
-   */
-  removeAllListeners(event) {
-    if (event) {
-      delete this._events[event];
+  removeAllListeners(_event) {
+    if (_event) {
+      delete this._events[_event];
     } else {
       this._events = {};
     }

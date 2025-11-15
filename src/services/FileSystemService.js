@@ -12,12 +12,8 @@ export default class FileSystemService {
     this.file_cache = new Map();
   }
 
-  /**
-   * 디렉토리 선택 및 권한 요청
-   */
   async selectDirectory() {
     try {
-      // File System Access API 사용
       this.root_handle = await window.showDirectoryPicker({
         mode: 'readwrite',
       });
@@ -32,25 +28,19 @@ export default class FileSystemService {
     }
   }
 
-  /**
-   * 파일 트리 구조 생성
-   */
-  async #buildFileTree(dirHandle, parent = null) {
-    const node = new FileNode(dirHandle.name, dirHandle.name, FILE_NODE_TYPE_DIRECTORY, parent);
+  async #buildFileTree(_dirHandle, _parent = null) {
+    const node = new FileNode(_dirHandle.name, _dirHandle.name, FILE_NODE_TYPE_DIRECTORY, _parent);
 
     try {
-      for await (const entry of dirHandle.values()) {
-        // 숨김 파일 제외
+      for await (const entry of _dirHandle.values()) {
         if (entry.name.startsWith('.')) continue;
 
         if (entry.kind === 'directory') {
-          // node_modules, dist 등 제외
           if (this.#shouldSkipDirectory(entry.name)) continue;
 
           const childNode = await this.#buildFileTree(entry, node);
           node.addChild(childNode);
         } else if (entry.kind === 'file') {
-          // 지원하는 확장자만 포함
           if (this.#isSupportedFile(entry.name)) {
             const fileNode = new FileNode(entry.name, entry.name, FILE_NODE_TYPE_FILE, node);
             fileNode.handle = entry;
@@ -62,95 +52,56 @@ export default class FileSystemService {
       node.sortChildren();
       return node;
     } catch (error) {
-      console.error(`디렉토리 읽기 오류: ${dirHandle.name}`, error);
+      console.error(`디렉토리 읽기 오류: ${_dirHandle.name}`, error);
       return node;
     }
   }
 
-  /**
-   * 제외할 디렉토리 확인
-   */
-  #shouldSkipDirectory(name) {
+  #shouldSkipDirectory(_name) {
     const SKIP_DIRS = ['node_modules', 'dist', 'build', '.git', '.vscode'];
-    return SKIP_DIRS.includes(name);
+    return SKIP_DIRS.includes(_name);
   }
 
-  /**
-   * 지원 파일 확인
-   */
-  #isSupportedFile(filename) {
+  #isSupportedFile(_filename) {
     const SUPPORTED_EXTENSIONS = ['.js', '.html', '.css', '.md'];
-    return SUPPORTED_EXTENSIONS.some((ext) => filename.endsWith(ext));
+    return SUPPORTED_EXTENSIONS.some((_ext) => _filename.endsWith(_ext));
   }
 
-  /**
-   * 파일 내용 읽기
-   */
-  async readFile(fileNode) {
+  async readFile(_fileNode) {
     try {
-      // 캐시 확인
-      const cached = this.file_cache.get(fileNode.path);
+      const cached = this.file_cache.get(_fileNode.path);
       if (cached) return cached;
 
-      // 파일 읽기
-      const file = await fileNode.handle.getFile();
+      const file = await _fileNode.handle.getFile();
       const content = await file.text();
 
-      // 캐시 저장
-      this.file_cache.set(fileNode.path, content);
+      this.file_cache.set(_fileNode.path, content);
 
       return content;
     } catch (error) {
-      console.error(`파일 읽기 오류: ${fileNode.name}`, error);
+      console.error(`파일 읽기 오류: ${_fileNode.name}`, error);
       throw error;
     }
   }
 
-  /**
-   * 파일 쓰기
-   */
-  async writeFile(fileNode, content) {
+  async writeFile(_fileNode, _content) {
     try {
-      const writable = await fileNode.handle.createWritable();
-      await writable.write(content);
+      const writable = await _fileNode.handle.createWritable();
+      await writable.write(_content);
       await writable.close();
 
-      // 캐시 갱신
-      this.file_cache.set(fileNode.path, content);
+      this.file_cache.set(_fileNode.path, _content);
     } catch (error) {
-      console.error(`파일 쓰기 오류: ${fileNode.name}`, error);
+      console.error(`파일 쓰기 오류: ${_fileNode.name}`, error);
       throw error;
     }
   }
 
-  /**
-   * 캐시 무효화
-   */
-  invalidateCache(path) {
-    if (path) {
-      this.file_cache.delete(path);
+  invalidateCache(_path) {
+    if (_path) {
+      this.file_cache.delete(_path);
     } else {
       this.file_cache.clear();
     }
-  }
-
-  /**
-   * 파일 핸들로 노드 검색
-   */
-  async findNodeByPath(rootNode, targetPath) {
-    if (rootNode.getFullPath() === targetPath) {
-      return rootNode;
-    }
-
-    for (const child of rootNode.children) {
-      if (child.isDirectory()) {
-        const found = await this.findNodeByPath(child, targetPath);
-        if (found) return found;
-      } else if (child.getFullPath() === targetPath) {
-        return child;
-      }
-    }
-
-    return null;
   }
 }
