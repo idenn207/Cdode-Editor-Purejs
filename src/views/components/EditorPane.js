@@ -48,6 +48,11 @@ export default class EditorPane extends EventEmitter {
 
     this.content_el.addEventListener('input', debouncedInput);
 
+    // 붙여넣기 이벤트
+    this.content_el.addEventListener('paste', (_e) => {
+      this.#handlePaste(_e);
+    });
+
     // 키 다운 (특수 키는 즉시 처리)
     this.content_el.addEventListener('keydown', (_e) => {
       this.#handleKeyDown(_e);
@@ -203,15 +208,21 @@ export default class EditorPane extends EventEmitter {
     const language = this.#detectLanguage();
     let html = '';
 
-    lines.forEach((_line) => {
+    lines.forEach((_line, _lineIndex) => {
       const displayLine = _line || '\n';
-      const highlightedHTML = this.syntax_renderer.renderLine(displayLine, language);
+      const highlightedHTML = this.syntax_renderer.renderLine(displayLine, language, {
+        searchResults: this.search_results,
+        currentIndex: this.search_current_index,
+        lineIndex: _lineIndex,
+      });
       html += `<div class="code-line">${highlightedHTML}</div>`;
     });
 
     // 커서 위치 저장
     const cursorInfo = this.#saveCursor();
 
+    // innerHTML 설정 전에 완전히 비우기
+    this.content_el.innerHTML = '';
     this.content_el.innerHTML = html;
     this.content_el.contentEditable = 'true';
 
@@ -343,6 +354,12 @@ export default class EditorPane extends EventEmitter {
 
     if (this.is_rendering) return;
 
+    // 중복 업데이트 방지
+    const currentText = this.document.getText();
+    if (text === currentText) {
+      return;
+    }
+
     this.document.content = text;
     this.document.lines = text.split('\n');
 
@@ -356,18 +373,29 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
+   * 붙여넣기 처리
+   */
+  #handlePaste(_e) {
+    _e.preventDefault();
+
+    // 클립보드에서 순수 텍스트만 가져오기
+    const text = _e.clipboardData.getData('text/plain');
+
+    if (!text) return;
+
+    // 순수 텍스트로 삽입
+    window.document.execCommand('insertText', false, text);
+
+    // Document 업데이트는 input 이벤트에서 자동 처리됨
+  }
+
+  /**
    * 특수 키 처리
    */
   #handleKeyDown(_e) {
     if (_e.key === 'Tab') {
       _e.preventDefault();
       window.document.execCommand('insertText', false, '  ');
-      return;
-    }
-
-    if (_e.ctrlKey && _e.key === 's') {
-      _e.preventDefault();
-      this.emit('save-requested', this.document);
       return;
     }
   }
@@ -391,31 +419,72 @@ export default class EditorPane extends EventEmitter {
    */
   #extractText() {
     const lines = [];
-    const codeLines = this.content_el.querySelectorAll('.code-line');
+
+    // 최상위 .code-line만 선택 (중첩 방지)
+    const codeLines = this.content_el.querySelectorAll(':scope > .code-line');
+    // const codeLines = this.content_el.querySelectorAll('.code-line');
 
     codeLines.forEach((_lineEl) => {
       let lineText = '';
 
-      // 노드 순회하며 텍스트 추출
-      const walkNodes = (_node) => {
+      // 텍스트 노드만 재귀 추출
+      const extractTextFromNode = (_node) => {
         if (_node.nodeType === Node.TEXT_NODE) {
           lineText += _node.textContent;
-        } else if (_node.nodeName === 'BR') {
-          // BR 태그는 무시 (우리가 넣은 적 없음)
-          return;
-        } else {
+        } else if (_node.nodeType === Node.ELEMENT_NODE) {
+          // BR 태그는 무시
+          if (_node.nodeName === 'BR') {
+            return;
+          }
+
+          // 자식 노드 순회
           for (let child of _node.childNodes) {
-            walkNodes(child);
+            extractTextFromNode(child);
           }
         }
       };
 
-      walkNodes(_lineEl);
-
+      extractTextFromNode(_lineEl);
       lines.push(lineText);
     });
 
     return lines.join('\n');
+  }
+
+  /**
+   * 검색 결과 하이라이트
+   */
+  highlightSearchResults(_results, _currentIndex) {
+    this.search_results = _results;
+    this.search_current_index = _currentIndex;
+
+    // 렌더링 시 하이라이트 적용
+    this.#render();
+
+    // 현재 결과로 스크롤
+    if (_currentIndex >= 0 && _currentIndex < _results.length) {
+      this.#scrollToSearchResult(_results[_currentIndex]);
+    }
+  }
+
+  /**
+   * 검색 하이라이트 제거
+   */
+  clearSearchHighlights() {
+    this.search_results = [];
+    this.search_current_index = -1;
+    this.#render();
+  }
+
+  /**
+   * 검색 결과로 스크롤
+   */
+  #scrollToSearchResult(_result) {
+    // 해당 줄로 스크롤
+    const lineHeight = 22.4;
+    const scrollTop = _result.line * lineHeight;
+
+    this.content_wrapper_el.scrollTop = scrollTop - 100; // 상단 여백
   }
 
   /**

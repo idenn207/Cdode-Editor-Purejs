@@ -1,11 +1,11 @@
 /**
  * 파일: src/utils/TokenParser.js
- * 기능: 소스코드 토큰 분석
- * 책임: 코드를 의미 단위로 분리
+ * 수정: 제어 키워드 토큰 타입 추가
  */
 
 // 토큰 타입
 export const TOKEN_KEYWORD = 'keyword';
+export const TOKEN_KEYWORD_CONTROL = 'keyword-control'; // 새로 추가
 export const TOKEN_STRING = 'string';
 export const TOKEN_COMMENT = 'comment';
 export const TOKEN_NUMBER = 'number';
@@ -22,9 +22,6 @@ export const TOKEN_METHOD = 'method';
 export const TOKEN_CONSTANT = 'constant';
 
 export default class TokenParser {
-  /**
-   * 정규식 매칭으로 토큰 생성
-   */
   static tokenize(_code, _patterns) {
     const tokens = [];
     let remaining = _code;
@@ -52,7 +49,6 @@ export default class TokenParser {
         }
       }
 
-      // 매칭 안되면 한 글자씩 진행
       if (!matched) {
         tokens.push({
           type: TOKEN_TEXT,
@@ -68,9 +64,6 @@ export default class TokenParser {
     return tokens;
   }
 
-  /**
-   * 토큰 배열을 텍스트로 병합
-   */
   static tokensToText(_tokens) {
     return _tokens.map((_t) => _t.value).join('');
   }

@@ -1,14 +1,15 @@
 /**
  * 파일: src/app.js
- * 기능: 애플리케이션 진입점
- * 책임: 전체 애플리케이션 초기화 및 컴포넌트 조립
+ * 수정 내용: SearchPanel 및 KeyBindingManager 통합
  */
 
 import EditorController from './controllers/EditorController.js';
 import FileController from './controllers/FileController.js';
 import TabController from './controllers/TabController.js';
 import FileSystemService from './services/FileSystemService.js';
+import KeyBindingManager from './utils/KeyBindingManager.js';
 import EditorPane from './views/components/EditorPane.js';
+import SearchPanel from './views/components/SearchPanel.js';
 import Sidebar from './views/components/Sidebar.js';
 import TabBar from './views/components/TabBar.js';
 
@@ -28,7 +29,10 @@ class Application {
       sidebar: null,
       tabBar: null,
       editorPane: null,
+      searchPanel: null,
     };
+
+    this.keyBindings = null;
   }
 
   async initialize() {
@@ -43,10 +47,15 @@ class Application {
     this.views.sidebar = new Sidebar('Sidebar');
     this.views.tabBar = new TabBar('TabBar');
     this.views.editorPane = new EditorPane('EditorContainer');
+    this.views.searchPanel = new SearchPanel('EditorContainer');
 
     this.controllers.editor.setEditorPane(this.views.editorPane);
+    this.controllers.editor.setSearchPanel(this.views.searchPanel);
+
+    this.keyBindings = new KeyBindingManager();
 
     this.#connectEvents();
+    this.#setupKeyBindings();
 
     await this.#loadStyles();
 
@@ -55,7 +64,6 @@ class Application {
 
   #connectEvents() {
     // ===== Sidebar 이벤트 =====
-
     this.views.sidebar.on('request-open-folder', async () => {
       await this.controllers.file.openDirectory();
     });
@@ -65,7 +73,6 @@ class Application {
     });
 
     // ===== FileController 이벤트 =====
-
     this.controllers.file.on('directory-opened', (_rootNode) => {
       this.views.sidebar.render(_rootNode);
     });
@@ -82,7 +89,6 @@ class Application {
     });
 
     // ===== TabController 이벤트 =====
-
     this.controllers.tab.on('document-opened', (_document) => {
       console.log('Document 열림:', _document.file_node.name);
     });
@@ -100,7 +106,6 @@ class Application {
     });
 
     // ===== TabBar 이벤트 =====
-
     this.views.tabBar.on('tab-activated', (_document) => {
       this.controllers.tab.activateDocument(_document);
     });
@@ -114,7 +119,6 @@ class Application {
     });
 
     // ===== EditorController 이벤트 =====
-
     this.controllers.editor.on('document-saved', (_document) => {
       console.log('저장됨:', _document.file_node.name);
       this.views.tabBar.updateTab(_document);
@@ -130,12 +134,50 @@ class Application {
     });
   }
 
+  /**
+   * 키보드 단축키 설정
+   */
+  #setupKeyBindings() {
+    // 검색
+    this.keyBindings.register('ctrl+f', () => {
+      this.controllers.editor.showSearch();
+    });
+
+    // 바꾸기
+    this.keyBindings.register('ctrl+h', () => {
+      this.controllers.editor.showReplace();
+    });
+
+    // 저장
+    this.keyBindings.register('ctrl+s', () => {
+      const doc = this.controllers.editor.getCurrentDocument();
+      if (doc) {
+        this.controllers.editor.saveDocument(doc);
+      }
+    });
+
+    // 전체 저장
+    this.keyBindings.register('ctrl+shift+s', () => {
+      this.controllers.editor.saveAllDocuments();
+    });
+
+    // 탭 닫기 - Ctrl+W 제거 (브라우저와 충돌)
+    // 탭바의 × 버튼을 사용하세요
+
+    // 폴더 열기
+    this.keyBindings.register('ctrl+o', () => {
+      this.controllers.file.openDirectory();
+    });
+
+    console.log('⌨️ 키보드 단축키 등록 완료:', this.keyBindings.getBindings());
+  }
+
   async #openFile(_fileNode) {
     await this.controllers.file.openFile(_fileNode);
   }
 
   async #loadStyles() {
-    const styles = ['sidebar', 'tabbar', 'editor', 'syntax'];
+    const styles = ['sidebar', 'tabbar', 'editor', 'syntax', 'search-panel'];
 
     for (const style of styles) {
       const link = window.document.createElement('link');

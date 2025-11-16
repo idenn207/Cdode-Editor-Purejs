@@ -1,11 +1,15 @@
 /**
  * 파일: src/styles/syntax.css
- * 수정 내용: function, class, property, method, constant 색상 추가
+ * 수정: 제어 키워드 색상 추가, 클래스 색상 변경
  */
 
 /* JavaScript & 공통 */
 .token-keyword {
-  color: #569cd6; /* 파란색 - if, for, function */
+  color: #569cd6; /* 파란색 - if, for, function, const, let, var */
+}
+
+.token-keyword-control {
+  color: #c586c0; /* 보라색 - import, export, default, continue, break, return */
 }
 
 .token-string {
@@ -33,7 +37,7 @@
   color: #d4d4d4; /* 회색 - { } ( ) ; */
 }
 
-/* NEW: JavaScript 전용 토큰 */
+/* JavaScript 전용 토큰 */
 .token-function {
   color: #dcdcaa; /* 노란색 - functionName() */
 }
