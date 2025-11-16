@@ -1,0 +1,69 @@
+/**
+ * 파일: src/styles/syntax.css
+ * 수정 내용: function, class, property, method, constant 색상 추가
+ */
+
+/* JavaScript & 공통 */
+.token-keyword {
+  color: #569cd6; /* 파란색 - if, for, function */
+}
+
+.token-string {
+  color: #ce9178; /* 주황색 - "text" */
+}
+
+.token-comment {
+  color: #6a9955; /* 녹색 - // comment */
+  font-style: italic;
+}
+
+.token-number {
+  color: #b5cea8; /* 연두색 - 123 */
+}
+
+.token-operator {
+  color: #d4d4d4; /* 회색 - +, -, = */
+}
+
+.token-identifier {
+  color: #9cdcfe; /* 하늘색 - variableName */
+}
+
+.token-punctuation {
+  color: #d4d4d4; /* 회색 - { } ( ) ; */
+}
+
+/* NEW: JavaScript 전용 토큰 */
+.token-function {
+  color: #dcdcaa; /* 노란색 - functionName() */
+}
+
+.token-class {
+  color: #4ec9b0; /* 청록색 - ClassName */
+}
+
+.token-property {
+  color: #9cdcfe; /* 하늘색 - obj.property */
+}
+
+.token-method {
+  color: #dcdcaa; /* 노란색 - obj.method() */
+}
+
+.token-constant {
+  color: #4fc3f7; /* 밝은 파란색 - CONSTANT_VALUE */
+}
+
+/* HTML 전용 */
+.token-tag {
+  color: #569cd6; /* 파란색 - <div> */
+}
+
+.token-attribute {
+  color: #9cdcfe; /* 하늘색 - class="..." */
+}
+
+/* 일반 텍스트 */
+.token-text {
+  color: #d4d4d4; /* 기본 회색 */
+}

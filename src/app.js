@@ -135,7 +135,7 @@ class Application {
   }
 
   async #loadStyles() {
-    const styles = ['sidebar', 'tabbar', 'editor'];
+    const styles = ['sidebar', 'tabbar', 'editor', 'syntax'];
 
     for (const style of styles) {
       const link = window.document.createElement('link');

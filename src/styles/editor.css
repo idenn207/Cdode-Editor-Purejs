@@ -1,7 +1,6 @@
 /**
  * 파일: src/styles/editor.css
- * 기능: 에디터 스타일
- * 책임: 텍스트 편집기 UI 스타일링
+ * 수정 내용: Virtual Scrolling 래퍼 추가
  */
 
 .editor-pane {
@@ -22,20 +21,28 @@
   user-select: none;
   border-right: 1px solid var(--border-color);
   min-width: 50px;
+  overflow: hidden; /* 스크롤 숨김 */
 }
 
 .line-number {
-  height: 22.4px; /* line-height: 1.6 * 14px */
+  height: 22.4px;
   font-size: 13px;
 }
 
-.editor-content {
+/* Virtual Scrolling 래퍼 추가 */
+.editor-content-wrapper {
   flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  position: relative;
+}
+
+.editor-content {
   padding: 10px 16px;
   outline: none;
-  overflow-y: auto;
   white-space: pre;
   tab-size: 2;
+  min-height: 100%;
 }
 
 .editor-content:focus {
@@ -54,17 +61,27 @@
   font-size: 14px;
 }
 
-/* 커서 스타일 */
-.editor-content::selection {
-  background-color: var(--bg-active);
+/* 선택 영역 스타일 개선 */
+.editor-content ::selection {
+  background-color: #264f78;
+  color: inherit;
 }
 
-/* 스크롤바 동기화를 위한 스타일 */
-.line-numbers,
-.editor-content {
-  overflow-y: auto;
+/* 스크롤바 스타일 */
+.editor-content-wrapper::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
 }
 
-.line-numbers::-webkit-scrollbar {
-  width: 0;
+.editor-content-wrapper::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+.editor-content-wrapper::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 4px;
+}
+
+.editor-content-wrapper::-webkit-scrollbar-thumb:hover {
+  background: #4e4e4e;
 }
