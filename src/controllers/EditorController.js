@@ -4,6 +4,8 @@
  * 책임: Document와 UI 컴포넌트 간 조율
  */
 
+import CompletionService from '../services/CompletionService.js';
+import HistoryService from '../services/HistoryService.js';
 import SearchService from '../services/SearchService.js';
 import EventEmitter from '../utils/EventEmitter.js';
 
@@ -20,6 +22,13 @@ export default class EditorController extends EventEmitter {
     this.search_panel = null;
     this.current_search_results = [];
     this.current_search_index = -1;
+
+    // 자동완성 추가
+    this.completionService = new CompletionService();
+    this.completion_panel = null;
+
+    // 히스토리 (Undo/Redo)
+    this.historyService = new HistoryService();
   }
 
   /**
@@ -59,6 +68,127 @@ export default class EditorController extends EventEmitter {
       this.current_search_results = [];
       this.current_search_index = -1;
     });
+  }
+
+  /**
+   * CompletionPanel 설정
+   */
+  setCompletionPanel(_completionPanel) {
+    this.completion_panel = _completionPanel;
+
+    // 항목 선택
+    this.completion_panel.on('item-selected', (_item) => {
+      this.editorPane.insertCompletion(_item);
+      this.completion_panel.hide();
+      this.editorPane.setCompletionPanelVisible(false);
+    });
+
+    // 패널 닫기
+    this.completion_panel.on('close-requested', () => {
+      this.completion_panel.hide();
+      this.editorPane.setCompletionPanelVisible(false);
+    });
+  }
+
+  setEditorPane(_editorPane) {
+    this.editorPane = _editorPane;
+
+    // ... 기존 이벤트
+
+    // 자동완성 트리거
+    this.editorPane.on('trigger-completion', (_data) => {
+      this.#handleCompletionTrigger(_data);
+    });
+
+    // 자동완성 네비게이션
+    this.editorPane.on('completion-next', () => {
+      if (this.completion_panel) {
+        this.completion_panel.selectNext();
+      }
+    });
+
+    this.editorPane.on('completion-previous', () => {
+      if (this.completion_panel) {
+        this.completion_panel.selectPrevious();
+      }
+    });
+
+    this.editorPane.on('completion-confirm', () => {
+      if (this.completion_panel) {
+        this.completion_panel.handleEnter();
+      }
+    });
+
+    this.editorPane.on('completion-cancel', () => {
+      if (this.completion_panel) {
+        this.completion_panel.handleEscape();
+      }
+    });
+  }
+
+  /**
+   * 자동완성 트리거 처리
+   */
+  #handleCompletionTrigger(_data) {
+    if (!this.current_document || !this.completion_panel) return;
+
+    const { line, column, prefix } = _data;
+    const language = this.#detectLanguage();
+
+    // 자동완성 항목 가져오기
+    const items = this.completionService.getCompletions(this.current_document, line, column, language);
+
+    if (items.length === 0) {
+      this.completion_panel.hide();
+      this.editorPane.setCompletionPanelVisible(false);
+      return;
+    }
+
+    // 커서 좌표
+    const coords = this.editorPane.getCursorCoordinates();
+
+    // 패널 표시
+    this.completion_panel.show(items, coords);
+    this.editorPane.setCompletionPanelVisible(true);
+  }
+
+  /**
+   * 수동 자동완성 트리거 (Ctrl+Space)
+   */
+  triggerCompletion() {
+    if (!this.editorPane) return;
+
+    const cursorPos = this.editorPane._getCursorPosition?.();
+    if (!cursorPos) return;
+
+    const currentLine = this.current_document?.getLine(cursorPos.line);
+    if (!currentLine) return;
+
+    const beforeCursor = currentLine.substring(0, cursorPos.column);
+    const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
+    const prefix = prefixMatch ? prefixMatch[0] : '';
+
+    this.#handleCompletionTrigger({
+      line: cursorPos.line,
+      column: cursorPos.column,
+      prefix: prefix,
+    });
+  }
+
+  #detectLanguage() {
+    if (!this.current_document || !this.current_document.file_node) {
+      return 'plaintext';
+    }
+
+    const ext = this.current_document.file_node.getExtension();
+    const langMap = {
+      '.js': 'javascript',
+      '.html': 'html',
+      '.css': 'css',
+      '.md': 'markdown',
+    };
+
+    return langMap[ext] || 'plaintext';
   }
 
   /**
@@ -216,6 +346,10 @@ export default class EditorController extends EventEmitter {
       this.editorPane.setDocument(_document);
     }
 
+    if (_document) {
+      this.historyService.initHistory(_document);
+    }
+
     // 검색 결과 초기화
     this.current_search_results = [];
     this.current_search_index = -1;
@@ -250,6 +384,46 @@ export default class EditorController extends EventEmitter {
     for (const doc of dirtyDocs) {
       await this.saveDocument(doc);
     }
+  }
+
+  /**
+   * Undo 실행
+   */
+  undo() {
+    if (!this.current_document) return;
+
+    const success = this.historyService.undo(this.current_document);
+
+    if (success) {
+      this.emit('status-message', 'Undo');
+    }
+  }
+
+  /**
+   * Redo 실행
+   */
+  redo() {
+    if (!this.current_document) return;
+
+    const success = this.historyService.redo(this.current_document);
+
+    if (success) {
+      this.emit('status-message', 'Redo');
+    }
+  }
+
+  /**
+   * Undo 가능 여부
+   */
+  canUndo() {
+    return this.current_document && this.historyService.canUndo(this.current_document);
+  }
+
+  /**
+   * Redo 가능 여부
+   */
+  canRedo() {
+    return this.current_document && this.historyService.canRedo(this.current_document);
   }
 
   getCurrentDocument() {

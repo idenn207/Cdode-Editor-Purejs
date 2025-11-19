@@ -8,6 +8,7 @@ import FileController from './controllers/FileController.js';
 import TabController from './controllers/TabController.js';
 import FileSystemService from './services/FileSystemService.js';
 import KeyBindingManager from './utils/KeyBindingManager.js';
+import CompletionPanel from './views/components/CompletionPanel.js';
 import EditorPane from './views/components/EditorPane.js';
 import SearchPanel from './views/components/SearchPanel.js';
 import Sidebar from './views/components/Sidebar.js';
@@ -48,9 +49,11 @@ class Application {
     this.views.tabBar = new TabBar('TabBar');
     this.views.editorPane = new EditorPane('EditorContainer');
     this.views.searchPanel = new SearchPanel('EditorContainer');
+    this.views.completionPanel = new CompletionPanel('EditorContainer');
 
     this.controllers.editor.setEditorPane(this.views.editorPane);
     this.controllers.editor.setSearchPanel(this.views.searchPanel);
+    this.controllers.editor.setCompletionPanel(this.views.completionPanel);
 
     this.keyBindings = new KeyBindingManager();
 
@@ -169,6 +172,26 @@ class Application {
       this.controllers.file.openDirectory();
     });
 
+    // 자동완성
+    this.keyBindings.register('ctrl+space', () => {
+      this.controllers.editor.triggerCompletion();
+    });
+
+    // Undo
+    this.keyBindings.register('ctrl+z', () => {
+      this.controllers.editor.undo();
+    });
+
+    // Redo
+    this.keyBindings.register('ctrl+y', () => {
+      this.controllers.editor.redo();
+    });
+
+    // Redo 대안
+    this.keyBindings.register('ctrl+shift+z', () => {
+      this.controllers.editor.redo();
+    });
+
     console.log('⌨️ 키보드 단축키 등록 완료:', this.keyBindings.getBindings());
   }
 
@@ -177,7 +200,7 @@ class Application {
   }
 
   async #loadStyles() {
-    const styles = ['sidebar', 'tabbar', 'editor', 'syntax', 'search-panel'];
+    const styles = ['sidebar', 'tabbar', 'editor', 'syntax', 'search-panel', 'completion-panel'];
 
     for (const style of styles) {
       const link = window.document.createElement('link');

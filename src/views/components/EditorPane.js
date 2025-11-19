@@ -69,6 +69,49 @@ export default class EditorPane extends EventEmitter {
     this.content_el.addEventListener('keyup', () => {
       this.#handleSelectionChange();
     });
+
+    // 자동완성 트리거 (타이핑)
+    const debouncedCompletion = debounce(() => {
+      this.#checkCompletionTrigger();
+    }, 300);
+
+    this.content_el.addEventListener('input', (_e) => {
+      // 기존 input 핸들러
+      const debouncedInput = debounce((_e) => {
+        this.#handleInput(_e);
+      }, 150);
+      debouncedInput(_e);
+
+      // 자동완성 트리거 체크
+      debouncedCompletion();
+    });
+
+    // 키보드 이벤트 (자동완성 패널용)
+    this.content_el.addEventListener('keydown', (_e) => {
+      // 자동완성 패널이 보이는 경우
+      if (this.completion_panel_visible) {
+        if (_e.key === 'ArrowDown') {
+          _e.preventDefault();
+          this.emit('completion-next');
+          return;
+        } else if (_e.key === 'ArrowUp') {
+          _e.preventDefault();
+          this.emit('completion-previous');
+          return;
+        } else if (_e.key === 'Enter') {
+          _e.preventDefault();
+          this.emit('completion-confirm');
+          return;
+        } else if (_e.key === 'Escape') {
+          _e.preventDefault();
+          this.emit('completion-cancel');
+          return;
+        }
+      }
+
+      // 기존 키 핸들러
+      this.#handleKeyDown(_e);
+    });
   }
 
   /**
@@ -255,6 +298,73 @@ export default class EditorPane extends EventEmitter {
 
     this.content_el.innerHTML = html;
     this.content_el.contentEditable = 'true';
+  }
+
+  /**
+   * 자동완성 트리거 체크
+   */
+  #checkCompletionTrigger() {
+    if (!this.document) return;
+
+    const cursorPos = this.#getCursorPosition();
+    if (!cursorPos) return;
+
+    const currentLine = this.document.getLine(cursorPos.line);
+    if (!currentLine) return;
+
+    // 커서 앞 텍스트에서 접두사 추출
+    const beforeCursor = currentLine.substring(0, cursorPos.column);
+    const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
+    const prefix = prefixMatch ? prefixMatch[0] : '';
+
+    if (prefix.length >= 1) {
+      this.emit('trigger-completion', {
+        line: cursorPos.line,
+        column: cursorPos.column,
+        prefix: prefix,
+      });
+    }
+  }
+
+  /**
+   * 커서 위치 가져오기 (줄, 열)
+   */
+  #getCursorPosition() {
+    try {
+      const selection = window.getSelection();
+      if (selection.rangeCount === 0) return null;
+
+      const range = selection.getRangeAt(0);
+
+      // 현재 줄 찾기
+      let node = range.startContainer;
+      while (node && node !== this.content_el) {
+        if (node.parentNode === this.content_el && node.classList?.contains('code-line')) {
+          break;
+        }
+        node = node.parentNode;
+      }
+
+      if (!node || !node.classList?.contains('code-line')) {
+        return null;
+      }
+
+      // 줄 번호
+      const lineElements = Array.from(this.content_el.querySelectorAll('.code-line'));
+      const lineIndex = lineElements.indexOf(node);
+
+      if (lineIndex === -1) return null;
+
+      // 열 번호 (텍스트 오프셋)
+      const preRange = range.cloneRange();
+      preRange.selectNodeContents(node);
+      preRange.setEnd(range.startContainer, range.startOffset);
+      const column = preRange.toString().length;
+
+      return { line: lineIndex, column: column };
+    } catch (e) {
+      return null;
+    }
   }
 
   /**
@@ -449,6 +559,71 @@ export default class EditorPane extends EventEmitter {
     });
 
     return lines.join('\n');
+  }
+
+  /**
+   * 커서 화면 좌표 가져오기
+   */
+  getCursorCoordinates() {
+    try {
+      const selection = window.getSelection();
+      if (selection.rangeCount === 0) return { top: 0, left: 0 };
+
+      const range = selection.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      const containerRect = this.container.getBoundingClientRect();
+
+      return {
+        top: rect.bottom - containerRect.top,
+        left: rect.left - containerRect.left,
+      };
+    } catch (e) {
+      return { top: 0, left: 0 };
+    }
+  }
+
+  /**
+   * 자동완성 삽입
+   */
+  insertCompletion(_completion) {
+    if (!this.document) return;
+
+    const cursorPos = this.#getCursorPosition();
+    if (!cursorPos) return;
+
+    const currentLine = this.document.getLine(cursorPos.line);
+    if (!currentLine) return;
+
+    // 접두사 찾기
+    const beforeCursor = currentLine.substring(0, cursorPos.column);
+    const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
+    const prefix = prefixMatch ? prefixMatch[0] : '';
+
+    // 접두사 제거 위치
+    const deleteStart = cursorPos.column - prefix.length;
+
+    // 텍스트 삽입
+    const newLine = currentLine.substring(0, deleteStart) + _completion.insertText + currentLine.substring(cursorPos.column);
+
+    this.document.lines[cursorPos.line] = newLine;
+    this.document.content = this.document.getText();
+    this.document.is_dirty = true;
+
+    // 재렌더링
+    this.#render();
+
+    // 커서 위치 조정 (삽입된 텍스트 끝으로)
+    const newColumn = deleteStart + _completion.insertText.length;
+
+    // 간단한 커서 위치 복원 (정확하지 않을 수 있음)
+    this.content_el.focus();
+  }
+
+  /**
+   * 자동완성 패널 가시성 설정
+   */
+  setCompletionPanelVisible(_visible) {
+    this.completion_panel_visible = _visible;
   }
 
   /**

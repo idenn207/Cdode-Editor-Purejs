@@ -22,6 +22,12 @@ export default class Document {
     return lines;
   }
 
+  _notifyChange() {
+    this.change_listeners.forEach((_listener) => {
+      _listener(this);
+    });
+  }
+
   getText() {
     return this.lines.join('\n');
   }

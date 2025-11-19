@@ -64,6 +64,7 @@ export default class KeyBindingManager {
 
     if (callback) {
       _e.preventDefault();
+      _e.stopPropagation();
       callback(_e);
     }
   }
