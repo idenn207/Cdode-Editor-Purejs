@@ -1,16 +1,10 @@
 /**
  * 파일: src/views/components/CompletionPanel.js
- * 기능: 자동완성 UI
- * 책임: 자동완성 항목 표시 및 선택
+ * 기능: 자동완성 패널 UI
+ * 책임: 자동완성 항목 표시, 선택, 키보드 네비게이션
+ * 수정: 패널 위치를 커서 아래 기준 (0,0)으로 정렬
  */
 
-import {
-  COMPLETION_KIND_CLASS,
-  COMPLETION_KIND_FUNCTION,
-  COMPLETION_KIND_KEYWORD,
-  COMPLETION_KIND_SNIPPET,
-  COMPLETION_KIND_VARIABLE,
-} from '../../services/CompletionService.js';
 import EventEmitter from '../../utils/EventEmitter.js';
 
 export default class CompletionPanel extends EventEmitter {
@@ -19,52 +13,55 @@ export default class CompletionPanel extends EventEmitter {
     this.container = window.document.getElementById(_containerId);
     this.items = [];
     this.selected_index = 0;
-    this.is_visible = false;
+    this.panel_el = null;
 
     this.#initialize();
   }
 
   #initialize() {
-    const panel = window.document.createElement('div');
-    panel.className = 'completion-panel';
-    panel.style.display = 'none';
-
-    this.container.appendChild(panel);
-    this.panel = panel;
+    this.panel_el = window.document.createElement('div');
+    this.panel_el.className = 'completion-panel';
+    this.panel_el.style.display = 'none';
+    this.container.appendChild(this.panel_el);
 
     this.#attachEvents();
   }
 
   #attachEvents() {
-    // 키보드 이벤트는 EditorPane에서 처리
-    // (패널이 보일 때만 화살표/엔터 키 가로채기)
+    // 클릭 이벤트
+    this.panel_el.addEventListener('click', (_e) => {
+      const itemEl = _e.target.closest('.completion-item');
+      if (!itemEl) return;
+
+      const index = parseInt(itemEl.dataset.index, 10);
+      if (isNaN(index)) return;
+
+      this.selected_index = index;
+      this.emit('confirm');
+    });
   }
 
   /**
-   * 패널 표시
+   * 패널 표시 (수정 2: 커서 기준 위치)
    */
-  show(_items, _position) {
-    if (!_items || _items.length === 0) {
-      this.hide();
-      return;
-    }
-
+  show(_items, _coords) {
     this.items = _items;
     this.selected_index = 0;
-    this.is_visible = true;
 
-    this.#renderItems();
-    this.#positionPanel(_position);
+    // 패널의 left-top을 커서 위치 기준으로 설정 (수정 2)
+    // _coords.y는 커서의 top 위치이므로 줄 높이만큼 아래로 이동
+    this.panel_el.style.left = `${_coords.x}px`;
+    this.panel_el.style.top = `${_coords.y + 20}px`; // 커서 아래 20px (줄 높이)
 
-    this.panel.style.display = 'block';
+    this.#render();
+    this.panel_el.style.display = 'block';
   }
 
   /**
    * 패널 숨김
    */
   hide() {
-    this.panel.style.display = 'none';
-    this.is_visible = false;
+    this.panel_el.style.display = 'none';
     this.items = [];
     this.selected_index = 0;
   }
@@ -76,7 +73,7 @@ export default class CompletionPanel extends EventEmitter {
     if (this.items.length === 0) return;
 
     this.selected_index = (this.selected_index + 1) % this.items.length;
-    this.#renderItems();
+    this.#render();
     this.#scrollToSelected();
   }
 
@@ -87,14 +84,14 @@ export default class CompletionPanel extends EventEmitter {
     if (this.items.length === 0) return;
 
     this.selected_index = (this.selected_index - 1 + this.items.length) % this.items.length;
-    this.#renderItems();
+    this.#render();
     this.#scrollToSelected();
   }
 
   /**
-   * 현재 선택된 항목 반환
+   * 현재 선택된 항목 가져오기
    */
-  getCurrentItem() {
+  getSelectedItem() {
     if (this.selected_index < 0 || this.selected_index >= this.items.length) {
       return null;
     }
@@ -102,107 +99,77 @@ export default class CompletionPanel extends EventEmitter {
   }
 
   /**
-   * 항목 렌더링
+   * 렌더링
    */
-  #renderItems() {
-    let html = '';
+  #render() {
+    if (this.items.length === 0) {
+      this.panel_el.innerHTML = '<div class="completion-empty">No suggestions</div>';
+      return;
+    }
+
+    const fragment = window.document.createDocumentFragment();
 
     this.items.forEach((_item, _index) => {
-      const isSelected = _index === this.selected_index;
-      const icon = this.#getIcon(_item.kind);
+      const itemEl = window.document.createElement('div');
+      itemEl.className = 'completion-item';
+      itemEl.dataset.index = _index;
 
-      html += `
-        <div class="completion-item ${isSelected ? 'selected' : ''}" data-index="${_index}">
-          <span class="completion-icon">${icon}</span>
-          <span class="completion-label">${this.#escapeHtml(_item.label)}</span>
-          <span class="completion-detail">${this.#escapeHtml(_item.detail || '')}</span>
-        </div>
-      `;
+      if (_index === this.selected_index) {
+        itemEl.classList.add('selected');
+      }
+
+      // 아이콘
+      const iconEl = window.document.createElement('div');
+      iconEl.className = 'completion-icon';
+      iconEl.textContent = this.#getIcon(_item.kind);
+      itemEl.appendChild(iconEl);
+
+      // 레이블
+      const labelEl = window.document.createElement('div');
+      labelEl.className = 'completion-label';
+      labelEl.textContent = _item.label;
+      itemEl.appendChild(labelEl);
+
+      // 상세 정보
+      if (_item.detail) {
+        const detailEl = window.document.createElement('div');
+        detailEl.className = 'completion-detail';
+        detailEl.textContent = _item.detail;
+        itemEl.appendChild(detailEl);
+      }
+
+      fragment.appendChild(itemEl);
     });
 
-    this.panel.innerHTML = html;
-
-    // 항목 클릭 이벤트
-    this.panel.querySelectorAll('.completion-item').forEach((_el) => {
-      _el.addEventListener('click', () => {
-        const index = parseInt(_el.dataset.index);
-        this.selected_index = index;
-        this.#confirmSelection();
-      });
-    });
+    this.panel_el.innerHTML = '';
+    this.panel_el.appendChild(fragment);
   }
 
   /**
    * 선택된 항목으로 스크롤
    */
   #scrollToSelected() {
-    const selectedEl = this.panel.querySelector('.completion-item.selected');
-    if (selectedEl) {
-      selectedEl.scrollIntoView({ block: 'nearest' });
-    }
+    const selectedEl = this.panel_el.querySelector('.completion-item.selected');
+    if (!selectedEl) return;
+
+    selectedEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   /**
-   * 패널 위치 지정
-   */
-  #positionPanel(_position) {
-    this.panel.style.top = `${_position.top + 20}px`;
-    this.panel.style.left = `${_position.left}px`;
-  }
-
-  /**
-   * 선택 확정
-   */
-  #confirmSelection() {
-    const item = this.getCurrentItem();
-    if (item) {
-      this.emit('item-selected', item);
-      this.hide();
-    }
-  }
-
-  /**
-   * Kind 아이콘 반환
+   * 아이콘 가져오기
    */
   #getIcon(_kind) {
     const icons = {
-      [COMPLETION_KIND_KEYWORD]: 'K',
-      [COMPLETION_KIND_VARIABLE]: 'v',
-      [COMPLETION_KIND_FUNCTION]: 'ƒ',
-      [COMPLETION_KIND_CLASS]: 'C',
-      [COMPLETION_KIND_SNIPPET]: '◊',
+      keyword: 'K',
+      variable: 'V',
+      function: 'F',
+      class: 'C',
+      method: 'M',
+      property: 'P',
+      snippet: 'S',
+      constant: 'C',
     };
-    return icons[_kind] || '•';
-  }
 
-  /**
-   * HTML 이스케이프
-   */
-  #escapeHtml(_text) {
-    const div = window.document.createElement('div');
-    div.textContent = _text;
-    return div.innerHTML;
-  }
-
-  /**
-   * 가시성 확인
-   */
-  isVisible() {
-    return this.is_visible;
-  }
-
-  /**
-   * Enter 키 처리 (외부에서 호출)
-   */
-  handleEnter() {
-    this.#confirmSelection();
-  }
-
-  /**
-   * Escape 키 처리 (외부에서 호출)
-   */
-  handleEscape() {
-    this.hide();
-    this.emit('close-requested');
+    return icons[_kind] || '?';
   }
 }

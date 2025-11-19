@@ -1,6 +1,12 @@
 /**
  * 파일: src/views/components/EditorPane.js
- * 수정: 자동 들여쓰기, 괄호 닫기, 실시간 업데이트
+ * 기능: 코드 에디터 UI 컴포넌트
+ * 책임: 텍스트 편집, 커서 관리, 신택스 하이라이팅, 자동완성 트리거
+ * 수정:
+ * 1. 괄호 사이 Enter 시 커서 위치 정확히 수정
+ * 2. 스크롤 시 line number 고정 (scrollTop 동기화)
+ * 3. Enter로 새 줄 생성 시 자동 스크롤
+ * 4. '{객체}.' 에서 Ctrl+Space로 멤버 목록 표시
  */
 
 import EventEmitter from '../../utils/EventEmitter.js';
@@ -29,9 +35,6 @@ export default class EditorPane extends EventEmitter {
     // 검색 관련
     this.search_results = [];
     this.search_current_index = -1;
-
-    // 실시간 렌더링
-    this.render_debounce_timeout = null;
 
     this.#initialize();
   }
@@ -79,83 +82,34 @@ export default class EditorPane extends EventEmitter {
       this.#handlePaste(_e);
     });
 
-    // 키 다운
+    // 특수 키
     this.content_el.addEventListener('keydown', (_e) => {
       this.#handleKeyDown(_e);
     });
 
-    // 커서 이동 시
+    // 클릭 시 활성 줄 업데이트
     this.content_el.addEventListener('click', () => {
       this.#updateActiveLine();
-      this.#checkHideCompletion(); // 추가
     });
 
-    this.content_el.addEventListener('keyup', (_e) => {
-      this.#updateActiveLine();
-      this.#handleSelectionChange();
-
-      // 방향키로 커서 이동 시 자동완성 닫기
-      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(_e.key)) {
-        this.#checkHideCompletion();
-      }
-    });
-
-    this.content_el.addEventListener('focus', () => {
-      this.emit('focus');
-    });
-
-    this.content_el.addEventListener('mouseup', () => {
-      this.#handleSelectionChange();
+    // 스크롤 시 line number 동기화 (수정 3)
+    this.content_wrapper_el.addEventListener('scroll', () => {
+      this.line_numbers_el.scrollTop = this.content_wrapper_el.scrollTop;
     });
   }
 
   /**
-   * 자동완성 패널 숨김 체크 - 새로 추가
-   */
-  #checkHideCompletion() {
-    if (!this.completion_panel_visible) return;
-
-    const cursorPos = this.getCursorPosition();
-    if (!cursorPos) return;
-
-    const currentLine = this.document.getLine(cursorPos.line);
-    if (!currentLine) return;
-
-    const beforeCursor = currentLine.substring(0, cursorPos.column);
-
-    // 식별자나 'this.', 'obj.' 패턴이 없으면 패널 닫기
-    const hasPattern = /[a-zA-Z_$][a-zA-Z0-9_$]*\.?[a-zA-Z0-9_$]*$/.test(beforeCursor);
-
-    if (!hasPattern) {
-      this.emit('completion-cancel');
-    }
-  }
-
-  /**
-   * Document 즉시 업데이트
+   * 즉시 Document 업데이트 (자동완성용)
    */
   #updateDocumentImmediate() {
     if (!this.document) return;
 
     const text = this.#extractText();
-    const currentText = this.document.getText();
-
-    if (text === currentText) return;
-
-    this.document.content = text;
-    this.document.lines = text.split('\n');
-
-    if (!this.document.is_dirty) {
-      this.document.is_dirty = true;
-      this.emit('content-changed', {
-        document: this.document,
-        text: text,
-      });
-    }
+    this.document.setText(text);
   }
 
   /**
-   * 자동완성 체크 스케줄링
+   * 자동완성 체크 스케줄링 (100ms debounce)
    */
   #scheduleCompletionCheck() {
     if (this.completion_check_timeout) {
@@ -179,13 +133,29 @@ export default class EditorPane extends EventEmitter {
     const currentLine = this.document.getLine(cursorPos.line);
     if (!currentLine) return;
 
+    // 커서 앞 텍스트에서 접두사 추출
     const beforeCursor = currentLine.substring(0, cursorPos.column);
 
-    // 'this.' 패턴
+    // 빈 줄에서 커서 이동 시 자동완성 닫기
+    if (beforeCursor.trim() === '') {
+      this.emit('trigger-completion', {
+        line: cursorPos.line,
+        column: cursorPos.column,
+        prefix: '',
+        contextType: 'normal',
+        objectName: null,
+      });
+      return;
+    }
+
+    // 'this.member' 패턴
     const thisMatch = beforeCursor.match(/\bthis\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
 
-    // 'obj.' 패턴 (변수명.멤버명)
+    // 'obj.member' 패턴 (변수명.멤버명)
     const objMatch = beforeCursor.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+
+    // 'obj.' 패턴 ('.' 바로 뒤, 수정 5)
+    const dotMatch = beforeCursor.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\.$/);
 
     // 일반 식별자
     const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
@@ -197,6 +167,11 @@ export default class EditorPane extends EventEmitter {
     if (thisMatch) {
       prefix = thisMatch[1];
       contextType = 'this';
+    } else if (dotMatch) {
+      // '.' 입력 직후 (수정 5)
+      objectName = dotMatch[1];
+      prefix = '';
+      contextType = 'object';
     } else if (objMatch) {
       objectName = objMatch[1];
       prefix = objMatch[2];
@@ -278,7 +253,7 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * Enter 키 처리 - 새로 추가
+   * Enter 키 처리 (수정 1, 4)
    */
   #handleEnterKey() {
     const cursorPos = this.getCursorPosition();
@@ -311,30 +286,58 @@ export default class EditorPane extends EventEmitter {
       (beforeTrimmed.endsWith('[') && afterTrimmed.startsWith(']'));
 
     if (isBetweenBrackets) {
-      // 괄호 사이: 두 줄 추가 + 추가 들여쓰기
+      // 괄호 사이: 두 줄 추가 + 추가 들여쓰기 (수정 1)
       const newIndent = currentIndent + '  ';
       const insertText = '\n' + newIndent + '\n' + currentIndent;
 
       window.document.execCommand('insertText', false, insertText);
 
-      // 커서를 중간 줄로 이동
+      // 커서를 중간 줄(들여쓰기가 있는 줄)의 끝으로 이동 (수정 1)
       setTimeout(() => {
         const selection = window.getSelection();
         if (selection.rangeCount > 0) {
           const range = selection.getRangeAt(0);
-          // 한 줄 위로 이동
-          const textNode = range.startContainer;
-          if (textNode.nodeType === Node.TEXT_NODE) {
-            const offset = range.startOffset - (currentIndent.length + 1);
-            if (offset >= 0) {
+          let node = range.startContainer;
+
+          // 현재 line 찾기
+          while (node && node !== this.content_el) {
+            if (node.classList?.contains('code-line')) {
+              break;
+            }
+            node = node.parentNode;
+          }
+
+          // 이전 line(들여쓰기가 있는 줄)의 끝으로 이동
+          if (node && node.previousSibling && node.previousSibling.classList?.contains('code-line')) {
+            const prevLine = node.previousSibling;
+            const textNode = prevLine.firstChild || prevLine;
+
+            if (textNode.nodeType === Node.TEXT_NODE) {
+              const offset = textNode.textContent.length;
               range.setStart(textNode, offset);
               range.setEnd(textNode, offset);
               selection.removeAllRanges();
               selection.addRange(range);
+            } else if (textNode.nodeType === Node.ELEMENT_NODE) {
+              // ELEMENT인 경우 마지막 자식 찾기
+              let lastChild = textNode;
+              while (lastChild.lastChild) {
+                lastChild = lastChild.lastChild;
+              }
+              if (lastChild.nodeType === Node.TEXT_NODE) {
+                const offset = lastChild.textContent.length;
+                range.setStart(lastChild, offset);
+                range.setEnd(lastChild, offset);
+                selection.removeAllRanges();
+                selection.addRange(range);
+              }
             }
           }
         }
       }, 0);
+
+      // 자동 스크롤 (수정 4)
+      this.#scrollToCursor();
       return;
     }
 
@@ -342,15 +345,43 @@ export default class EditorPane extends EventEmitter {
     if (beforeTrimmed.endsWith('{') || beforeTrimmed.endsWith('(') || beforeTrimmed.endsWith('[')) {
       const newIndent = currentIndent + '  ';
       window.document.execCommand('insertText', false, '\n' + newIndent);
+      this.#scrollToCursor();
       return;
     }
 
     // 일반 Enter: 현재 들여쓰기 유지
     window.document.execCommand('insertText', false, '\n' + currentIndent);
+    this.#scrollToCursor();
   }
 
   /**
-   * 자동 괄호 닫기 - 새로 추가
+   * 커서가 보이도록 스크롤 (수정 4)
+   */
+  #scrollToCursor() {
+    setTimeout(() => {
+      const selection = window.getSelection();
+      if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        let node = range.startContainer;
+
+        // 현재 line 찾기
+        while (node && node !== this.content_el) {
+          if (node.classList?.contains('code-line')) {
+            break;
+          }
+          node = node.parentNode;
+        }
+
+        if (node && node.classList?.contains('code-line')) {
+          // 새 줄이 보이도록 스크롤
+          node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      }
+    }, 10);
+  }
+
+  /**
+   * 자동 괄호 닫기
    */
   #handleAutoCloseBracket(_openBracket) {
     const closeBracket = { '(': ')', '{': '}', '[': ']' }[_openBracket];
@@ -388,7 +419,7 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 닫는 괄호 건너뛰기 체크 - 새로 추가
+   * 닫는 괄호 건너뛰기 체크
    */
   #shouldSkipClosingBracket(_closeBracket) {
     const cursorPos = this.getCursorPosition();
@@ -404,7 +435,7 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 닫는 괄호 건너뛰기 - 새로 추가
+   * 닫는 괄호 건너뛰기
    */
   #skipClosingBracket() {
     const selection = window.getSelection();
@@ -436,303 +467,119 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 선택 영역 변경 처리
+   * 텍스트 추출 (DOM → 문자열)
    */
-  #handleSelectionChange() {
-    if (!this.document) return;
-    const selection = window.getSelection();
-    if (selection.rangeCount === 0) return;
-    this.emit('cursor-moved', {
-      hasSelection: !selection.isCollapsed,
+  #extractText() {
+    const lines = this.content_el.querySelectorAll('.code-line');
+    const textLines = [];
+
+    lines.forEach((_line) => {
+      let text = '';
+      const walk = window.document.createTreeWalker(_line, NodeFilter.SHOW_TEXT, null, false);
+
+      let node;
+      while ((node = walk.nextNode())) {
+        text += node.textContent;
+      }
+
+      textLines.push(text);
     });
-  }
 
-  /**
-   * 활성 줄 하이라이트 업데이트
-   */
-  #updateActiveLine() {
-    const previousActive = this.content_el.querySelector('.code-line.active-line');
-    if (previousActive) {
-      previousActive.classList.remove('active-line');
-    }
-
-    const cursorPos = this.getCursorPosition();
-    if (!cursorPos) return;
-
-    const codeLines = this.content_el.querySelectorAll('.code-line');
-    if (cursorPos.line >= 0 && cursorPos.line < codeLines.length) {
-      codeLines[cursorPos.line].classList.add('active-line');
-    }
-  }
-
-  /**
-   * 문서 설정
-   */
-  setDocument(_document) {
-    this.document = _document;
-    this.is_rendering = false;
-
-    if (_document) {
-      const lineCount = _document.getLineCount();
-      this.use_virtual_scrolling = lineCount >= this.virtual_scrolling_threshold;
-
-      if (this.use_virtual_scrolling && !this.virtual_scroller) {
-        this.virtual_scroller = new VirtualScroller(this.content_wrapper_el, {
-          line_height: 22.4,
-          buffer_lines: 20,
-        });
-
-        this.content_wrapper_el.addEventListener('scroll', () => {
-          if (!this.is_rendering) {
-            this.#render();
-          }
-        });
-      }
-
-      this.#render();
-
-      if (!this.change_listener) {
-        this.change_listener = () => {
-          if (!this.is_rendering) {
-            this.#render();
-          }
-        };
-        _document.onChange(this.change_listener);
-      }
-    } else {
-      this.#renderEmpty();
-    }
-  }
-
-  /**
-   * 빈 상태 렌더링
-   */
-  #renderEmpty() {
-    this.content_el.innerHTML = '<div class="empty-editor">파일을 선택하세요</div>';
-    this.line_numbers_el.innerHTML = '';
-    this.content_el.contentEditable = 'false';
+    return textLines.join('\n');
   }
 
   /**
    * 렌더링
    */
-  #render() {
-    if (!this.document) return;
+  #render(_preserveCursor = true) {
+    if (this.is_rendering || !this.document) return;
 
     this.is_rendering = true;
 
-    if (this.use_virtual_scrolling) {
-      this.#renderWithVirtualScrolling();
-    } else {
-      this.#renderAllLines();
+    const lineCount = this.document.getLineCount();
+
+    // Virtual Scrolling 적용 여부
+    if (lineCount > this.virtual_scrolling_threshold && !this.use_virtual_scrolling) {
+      this.use_virtual_scrolling = true;
+      this.virtual_scroller = new VirtualScroller(this.content_el, this.document, this.syntax_renderer);
+      this.virtual_scroller.render();
+    } else if (lineCount <= this.virtual_scrolling_threshold && this.use_virtual_scrolling) {
+      this.use_virtual_scrolling = false;
+      this.virtual_scroller = null;
     }
+
+    if (this.use_virtual_scrolling) {
+      this.virtual_scroller.render();
+    } else {
+      this.#renderNormal();
+    }
+
+    this.#renderLineNumbers();
+    this.#updateActiveLine();
 
     this.is_rendering = false;
   }
 
   /**
-   * 전체 줄 렌더링
+   * 일반 렌더링
    */
-  #renderAllLines() {
-    this.#renderLineNumbers();
-    this.#renderContent();
-  }
-
-  /**
-   * Virtual Scrolling 렌더링
-   */
-  #renderWithVirtualScrolling() {
+  #renderNormal() {
     const lineCount = this.document.getLineCount();
-    this.virtual_scroller.setTotalLines(lineCount);
+    const fragment = window.document.createDocumentFragment();
 
-    const { start, end } = this.virtual_scroller.getVisibleRange();
-    this.#renderLineNumbersVirtual(start, end);
-    this.#renderContentVirtual(start, end);
+    for (let i = 0; i < lineCount; i++) {
+      const line = this.document.getLine(i);
+      const lineDiv = window.document.createElement('div');
+      lineDiv.className = 'code-line';
 
-    const totalHeight = this.virtual_scroller.getTotalHeight();
-    this.content_el.style.height = `${totalHeight}px`;
-    this.line_numbers_el.style.height = `${totalHeight}px`;
+      const highlighted = this.syntax_renderer.render(line, this.document.language);
+      lineDiv.innerHTML = highlighted || '<br>';
+
+      fragment.appendChild(lineDiv);
+    }
+
+    this.content_el.innerHTML = '';
+    this.content_el.appendChild(fragment);
   }
 
   /**
-   * 줄 번호 렌더링
+   * 라인 번호 렌더링
    */
   #renderLineNumbers() {
     const lineCount = this.document.getLineCount();
-    let html = '';
+    const fragment = window.document.createDocumentFragment();
 
-    for (let i = 0; i < lineCount; i++) {
-      html += `<div class="line-number">${i + 1}</div>`;
+    for (let i = 1; i <= lineCount; i++) {
+      const lineNumber = window.document.createElement('div');
+      lineNumber.textContent = i;
+      fragment.appendChild(lineNumber);
     }
 
-    this.line_numbers_el.innerHTML = html;
+    this.line_numbers_el.innerHTML = '';
+    this.line_numbers_el.appendChild(fragment);
   }
 
   /**
-   * 줄 번호 렌더링 (Virtual)
+   * 활성 줄 하이라이트
    */
-  #renderLineNumbersVirtual(_start, _end) {
-    let html = '';
-    const topOffset = _start * 22.4;
-    html += `<div style="height: ${topOffset}px;"></div>`;
+  #updateActiveLine() {
+    // 모든 줄에서 active-line 제거
+    const allLines = this.content_el.querySelectorAll('.code-line');
+    allLines.forEach((_line) => _line.classList.remove('active-line'));
 
-    for (let i = _start; i < _end; i++) {
-      html += `<div class="line-number">${i + 1}</div>`;
-    }
-
-    this.line_numbers_el.innerHTML = html;
-  }
-
-  /**
-   * 텍스트 내용 렌더링
-   */
-  #renderContent() {
-    const lines = this.document.lines;
-    const language = this.#detectLanguage();
-    let html = '';
-
-    lines.forEach((_line, _lineIndex) => {
-      const displayLine = _line || '\n';
-      const highlightedHTML = this.syntax_renderer.renderLine(displayLine, language, {
-        searchResults: this.search_results,
-        currentIndex: this.search_current_index,
-        lineIndex: _lineIndex,
-      });
-      html += `<div class="code-line">${highlightedHTML}</div>`;
-    });
-
-    this.content_el.innerHTML = html;
-    this.content_el.contentEditable = 'true';
-
-    setTimeout(() => {
-      this.#updateActiveLine();
-    }, 0);
-  }
-
-  /**
-   * 텍스트 내용 렌더링 (Virtual)
-   */
-  #renderContentVirtual(_start, _end) {
-    const lines = this.document.lines;
-    const language = this.#detectLanguage();
-    let html = '';
-
-    const topOffset = _start * 22.4;
-    html += `<div style="height: ${topOffset}px;"></div>`;
-
-    for (let i = _start; i < _end; i++) {
-      const line = lines[i] || '\n';
-      const highlightedHTML = this.syntax_renderer.renderLine(line, language);
-      html += `<div class="code-line">${highlightedHTML}</div>`;
-    }
-
-    this.content_el.innerHTML = html;
-    this.content_el.contentEditable = 'true';
-  }
-
-  /**
-   * 언어 감지
-   */
-  #detectLanguage() {
-    if (!this.document || !this.document.file_node) {
-      return 'plaintext';
-    }
-
-    const ext = this.document.file_node.getExtension();
-    const langMap = {
-      '.js': 'javascript',
-      '.html': 'html',
-      '.css': 'css',
-      '.md': 'markdown',
-    };
-
-    return langMap[ext] || 'plaintext';
-  }
-
-  /**
-   * 텍스트 추출
-   */
-  #extractText() {
-    const lines = [];
-    const codeLines = this.content_el.querySelectorAll(':scope > .code-line');
-
-    codeLines.forEach((_lineEl) => {
-      let lineText = '';
-
-      const extractTextFromNode = (_node) => {
-        if (_node.nodeType === Node.TEXT_NODE) {
-          lineText += _node.textContent;
-        } else if (_node.nodeType === Node.ELEMENT_NODE) {
-          if (_node.nodeName === 'BR') {
-            return;
-          }
-          for (let child of _node.childNodes) {
-            extractTextFromNode(child);
-          }
-        }
-      };
-
-      extractTextFromNode(_lineEl);
-      lines.push(lineText);
-    });
-
-    return lines.join('\n');
-  }
-
-  /**
-   * 자동완성 삽입
-   */
-  insertCompletion(_completion) {
-    if (!this.document) return;
-
+    // 현재 커서 위치 줄에 active-line 추가
     const cursorPos = this.getCursorPosition();
     if (!cursorPos) return;
 
-    const currentLine = this.document.getLine(cursorPos.line);
-    if (!currentLine) return;
-
-    const beforeCursor = currentLine.substring(0, cursorPos.column);
-
-    // 'this.' 또는 'obj.' 패턴 확인
-    const thisMatch = beforeCursor.match(/\bthis\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
-    const objMatch = beforeCursor.match(/\b[a-zA-Z_$][a-zA-Z0-9_$]*\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
-    const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
-
-    let prefix = '';
-    if (thisMatch) {
-      prefix = thisMatch[1];
-    } else if (objMatch) {
-      prefix = objMatch[1];
-    } else if (prefixMatch) {
-      prefix = prefixMatch[0];
+    const lineElements = Array.from(this.content_el.querySelectorAll('.code-line'));
+    if (lineElements[cursorPos.line]) {
+      lineElements[cursorPos.line].classList.add('active-line');
     }
-
-    // Selection API로 직접 삽입
-    const selection = window.getSelection();
-    if (selection.rangeCount === 0) return;
-
-    const range = selection.getRangeAt(0);
-
-    // 접두사 삭제
-    if (prefix.length > 0) {
-      range.setStart(range.startContainer, range.startOffset - prefix.length);
-      range.deleteContents();
-    }
-
-    // 새 텍스트 삽입
-    const textNode = window.document.createTextNode(_completion.insertText);
-    range.insertNode(textNode);
-
-    // 커서를 삽입된 텍스트 끝으로 이동
-    range.setStartAfter(textNode);
-    range.setEndAfter(textNode);
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    // Document 업데이트
-    this.#updateDocumentImmediate();
   }
 
+  /**
+   * 커서 위치 가져오기 (줄, 열) - PUBLIC
+   */
   getCursorPosition() {
     try {
       const selection = window.getSelection();
@@ -740,6 +587,7 @@ export default class EditorPane extends EventEmitter {
 
       const range = selection.getRangeAt(0);
 
+      // 현재 줄 찾기
       let node = range.startContainer;
       while (node && node !== this.content_el) {
         if (node.parentNode === this.content_el && node.classList?.contains('code-line')) {
@@ -752,11 +600,13 @@ export default class EditorPane extends EventEmitter {
         return null;
       }
 
+      // 줄 번호
       const lineElements = Array.from(this.content_el.querySelectorAll('.code-line'));
       const lineIndex = lineElements.indexOf(node);
 
       if (lineIndex === -1) return null;
 
+      // 열 번호 (텍스트 오프셋)
       const preRange = range.cloneRange();
       preRange.selectNodeContents(node);
       preRange.setEnd(range.startContainer, range.startOffset);
@@ -764,60 +614,241 @@ export default class EditorPane extends EventEmitter {
 
       return { line: lineIndex, column: column };
     } catch (e) {
+      console.error('커서 위치 가져오기 실패:', e);
       return null;
     }
   }
 
+  /**
+   * 커서 좌표 가져오기 (화면 픽셀 좌표)
+   */
   getCursorCoordinates() {
     try {
       const selection = window.getSelection();
-      if (selection.rangeCount === 0) return { top: 0, left: 0 };
+      if (selection.rangeCount === 0) return { x: 0, y: 0 };
 
       const range = selection.getRangeAt(0);
       const rect = range.getBoundingClientRect();
-      const containerRect = this.container.getBoundingClientRect();
 
       return {
-        top: rect.bottom - containerRect.top,
-        left: rect.left - containerRect.left,
+        x: rect.left,
+        y: rect.top,
       };
     } catch (e) {
-      return { top: 0, left: 0 };
+      console.error('커서 좌표 가져오기 실패:', e);
+      return { x: 0, y: 0 };
     }
   }
 
+  /**
+   * 수동 자동완성 트리거 (Ctrl+Space) (수정 6)
+   */
+  triggerManualCompletion() {
+    if (!this.document) return;
+
+    const cursorPos = this.getCursorPosition();
+    if (!cursorPos) return;
+
+    const currentLine = this.document.getLine(cursorPos.line);
+    const beforeCursor = currentLine.substring(0, cursorPos.column);
+
+    // contextType 파싱
+    const thisMatch = beforeCursor.match(/\bthis\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+    const objMatch = beforeCursor.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+    const dotMatch = beforeCursor.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\.$/); // '.' 바로 뒤 (수정 6)
+    const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
+
+    let prefix = '';
+    let contextType = 'normal';
+    let objectName = null;
+
+    if (thisMatch) {
+      prefix = thisMatch[1];
+      contextType = 'this';
+    } else if (dotMatch) {
+      // '.' 바로 뒤에서 Ctrl+Space (수정 6)
+      objectName = dotMatch[1];
+      prefix = '';
+      contextType = 'object';
+    } else if (objMatch) {
+      objectName = objMatch[1];
+      prefix = objMatch[2];
+      contextType = 'object';
+    } else if (prefixMatch) {
+      prefix = prefixMatch[0];
+    }
+
+    this.emit('trigger-completion', {
+      line: cursorPos.line,
+      column: cursorPos.column,
+      prefix,
+      contextType,
+      objectName,
+    });
+  }
+
+  /**
+   * 자동완성 삽입
+   */
+  insertCompletion(_text, _prefix) {
+    const selection = window.getSelection();
+    if (selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+
+    // prefix 길이만큼 뒤로 이동하여 삭제
+    if (_prefix.length > 0) {
+      range.setStart(range.startContainer, range.startOffset - _prefix.length);
+      range.deleteContents();
+    }
+
+    // 새 텍스트 삽입
+    const textNode = window.document.createTextNode(_text);
+    range.insertNode(textNode);
+
+    // 커서를 텍스트 끝으로 이동
+    range.setStartAfter(textNode);
+    range.setEndAfter(textNode);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    this.#updateDocumentImmediate();
+  }
+
+  /**
+   * 자동완성 패널 표시 여부 설정
+   */
   setCompletionPanelVisible(_visible) {
     this.completion_panel_visible = _visible;
   }
 
-  // 검색 관련 메서드들 동일
-  highlightSearchResults(_results, _currentIndex) {
-    this.search_results = _results;
-    this.search_current_index = _currentIndex;
-    this.#render();
+  /**
+   * Document 설정
+   */
+  setDocument(_document) {
+    this.document = _document;
 
-    if (_currentIndex >= 0 && _currentIndex < _results.length) {
-      this.#scrollToSearchResult(_results[_currentIndex]);
+    if (this.change_listener) {
+      this.change_listener.remove();
     }
-  }
 
-  clearSearchHighlights() {
-    this.search_results = [];
-    this.search_current_index = -1;
+    this.change_listener = this.document.onChange(() => {
+      this.#render();
+    });
+
     this.#render();
   }
 
-  #scrollToSearchResult(_result) {
-    const lineHeight = 22.4;
-    const scrollTop = _result.line * lineHeight;
-    this.content_wrapper_el.scrollTop = scrollTop - 100;
-  }
-
+  /**
+   * 포커스
+   */
   focus() {
     this.content_el.focus();
   }
 
-  getDocument() {
-    return this.document;
+  /**
+   * 검색 결과 하이라이트
+   */
+  highlightSearchResults(_results, _currentIndex) {
+    this.search_results = _results;
+    this.search_current_index = _currentIndex;
+
+    // 모든 하이라이트 제거
+    const allHighlights = this.content_el.querySelectorAll('.search-highlight, .search-highlight-current');
+    allHighlights.forEach((_el) => {
+      const parent = _el.parentNode;
+      parent.replaceChild(window.document.createTextNode(_el.textContent), _el);
+      parent.normalize();
+    });
+
+    if (_results.length === 0) return;
+
+    // 각 검색 결과에 하이라이트 추가
+    const lineElements = Array.from(this.content_el.querySelectorAll('.code-line'));
+
+    _results.forEach((_result, _index) => {
+      const lineEl = lineElements[_result.line];
+      if (!lineEl) return;
+
+      const isCurrent = _index === _currentIndex;
+      this.#highlightInLine(lineEl, _result.start, _result.end, isCurrent);
+    });
+
+    // 현재 결과로 스크롤
+    if (_currentIndex >= 0 && _currentIndex < _results.length) {
+      const currentResult = _results[_currentIndex];
+      const lineEl = lineElements[currentResult.line];
+      if (lineEl) {
+        lineEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    }
+  }
+
+  /**
+   * 줄 내에서 하이라이트 추가
+   */
+  #highlightInLine(_lineEl, _start, _end, _isCurrent) {
+    const walk = window.document.createTreeWalker(_lineEl, NodeFilter.SHOW_TEXT, null, false);
+
+    let currentOffset = 0;
+    let node;
+    const nodesToProcess = [];
+
+    while ((node = walk.nextNode())) {
+      const nodeLength = node.textContent.length;
+      const nodeStart = currentOffset;
+      const nodeEnd = currentOffset + nodeLength;
+
+      if (nodeEnd > _start && nodeStart < _end) {
+        nodesToProcess.push({
+          node: node,
+          nodeStart: nodeStart,
+          nodeEnd: nodeEnd,
+        });
+      }
+
+      currentOffset = nodeEnd;
+    }
+
+    nodesToProcess.forEach(({ node, nodeStart, nodeEnd }) => {
+      const highlightStart = Math.max(0, _start - nodeStart);
+      const highlightEnd = Math.min(node.textContent.length, _end - nodeStart);
+
+      const beforeText = node.textContent.substring(0, highlightStart);
+      const highlightText = node.textContent.substring(highlightStart, highlightEnd);
+      const afterText = node.textContent.substring(highlightEnd);
+
+      const fragment = window.document.createDocumentFragment();
+
+      if (beforeText) {
+        fragment.appendChild(window.document.createTextNode(beforeText));
+      }
+
+      const highlight = window.document.createElement('span');
+      highlight.className = _isCurrent ? 'search-highlight-current' : 'search-highlight';
+      highlight.textContent = highlightText;
+      fragment.appendChild(highlight);
+
+      if (afterText) {
+        fragment.appendChild(window.document.createTextNode(afterText));
+      }
+
+      node.parentNode.replaceChild(fragment, node);
+    });
+  }
+
+  /**
+   * 검색 결과 제거
+   */
+  clearSearchHighlights() {
+    this.search_results = [];
+    this.search_current_index = -1;
+
+    const allHighlights = this.content_el.querySelectorAll('.search-highlight, .search-highlight-current');
+    allHighlights.forEach((_el) => {
+      const parent = _el.parentNode;
+      parent.replaceChild(window.document.createTextNode(_el.textContent), _el);
+      parent.normalize();
+    });
   }
 }
