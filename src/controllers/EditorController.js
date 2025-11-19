@@ -1,11 +1,9 @@
 /**
  * 파일: src/controllers/EditorController.js
- * 기능: 에디터 로직 제어
- * 책임: Document와 UI 컴포넌트 간 조율
+ * 수정: 이벤트 리스너 순서 조정, 디버깅 추가
  */
 
 import CompletionService from '../services/CompletionService.js';
-import HistoryService from '../services/HistoryService.js';
 import SearchService from '../services/SearchService.js';
 import EventEmitter from '../utils/EventEmitter.js';
 
@@ -17,18 +15,15 @@ export default class EditorController extends EventEmitter {
     this.current_document = null;
     this.editorPane = null;
 
-    // 검색 관련 추가
+    // 검색 관련
     this.searchService = new SearchService();
     this.search_panel = null;
     this.current_search_results = [];
     this.current_search_index = -1;
 
-    // 자동완성 추가
+    // 자동완성
     this.completionService = new CompletionService();
     this.completion_panel = null;
-
-    // 히스토리 (Undo/Redo)
-    this.historyService = new HistoryService();
   }
 
   /**
@@ -37,32 +32,26 @@ export default class EditorController extends EventEmitter {
   setSearchPanel(_searchPanel) {
     this.search_panel = _searchPanel;
 
-    // 검색어 변경
     this.search_panel.on('search-changed', (_query, _options) => {
       this.#performSearch(_query, _options);
     });
 
-    // 다음 찾기
     this.search_panel.on('find-next', () => {
       this.#findNext();
     });
 
-    // 이전 찾기
     this.search_panel.on('find-previous', () => {
       this.#findPrevious();
     });
 
-    // 하나 바꾸기
     this.search_panel.on('replace-one', (_replacement) => {
       this.#replaceOne(_replacement);
     });
 
-    // 전체 바꾸기
     this.search_panel.on('replace-all', (_query, _replacement, _options) => {
       this.#replaceAll(_query, _replacement, _options);
     });
 
-    // 패널 닫기
     this.search_panel.on('close-requested', () => {
       this.editorPane.clearSearchHighlights();
       this.current_search_results = [];
@@ -75,51 +64,69 @@ export default class EditorController extends EventEmitter {
    */
   setCompletionPanel(_completionPanel) {
     this.completion_panel = _completionPanel;
+    console.log('[EditorController] CompletionPanel 설정됨');
 
-    // 항목 선택
     this.completion_panel.on('item-selected', (_item) => {
+      console.log('[EditorController] 항목 선택됨:', _item.label);
       this.editorPane.insertCompletion(_item);
       this.completion_panel.hide();
       this.editorPane.setCompletionPanelVisible(false);
     });
 
-    // 패널 닫기
     this.completion_panel.on('close-requested', () => {
+      console.log('[EditorController] 패널 닫기 요청');
       this.completion_panel.hide();
       this.editorPane.setCompletionPanelVisible(false);
     });
   }
 
+  /**
+   * EditorPane 설정
+   */
   setEditorPane(_editorPane) {
     this.editorPane = _editorPane;
+    console.log('[EditorController] EditorPane 설정됨');
 
-    // ... 기존 이벤트
+    // 내용 변경
+    this.editorPane.on('content-changed', ({ document }) => {
+      this.emit('content-changed', document);
+    });
+
+    // 저장 요청
+    this.editorPane.on('save-requested', (_document) => {
+      this.saveDocument(_document);
+    });
 
     // 자동완성 트리거
     this.editorPane.on('trigger-completion', (_data) => {
+      console.log('[EditorController] trigger-completion 이벤트 수신:', _data);
       this.#handleCompletionTrigger(_data);
     });
 
     // 자동완성 네비게이션
     this.editorPane.on('completion-next', () => {
+      console.log('[EditorController] completion-next');
       if (this.completion_panel) {
         this.completion_panel.selectNext();
       }
     });
 
     this.editorPane.on('completion-previous', () => {
+      console.log('[EditorController] completion-previous');
       if (this.completion_panel) {
         this.completion_panel.selectPrevious();
       }
     });
 
     this.editorPane.on('completion-confirm', () => {
+      console.log('[EditorController] completion-confirm');
       if (this.completion_panel) {
         this.completion_panel.handleEnter();
       }
     });
 
     this.editorPane.on('completion-cancel', () => {
+      console.log('[EditorController] completion-cancel');
       if (this.completion_panel) {
         this.completion_panel.handleEscape();
       }
@@ -132,11 +139,10 @@ export default class EditorController extends EventEmitter {
   #handleCompletionTrigger(_data) {
     if (!this.current_document || !this.completion_panel) return;
 
-    const { line, column, prefix } = _data;
+    const { line, column, prefix, contextType, objectName } = _data;
     const language = this.#detectLanguage();
 
-    // 자동완성 항목 가져오기
-    const items = this.completionService.getCompletions(this.current_document, line, column, language);
+    const items = this.completionService.getCompletions(this.current_document, line, column, language, contextType, objectName);
 
     if (items.length === 0) {
       this.completion_panel.hide();
@@ -144,10 +150,8 @@ export default class EditorController extends EventEmitter {
       return;
     }
 
-    // 커서 좌표
     const coords = this.editorPane.getCursorCoordinates();
 
-    // 패널 표시
     this.completion_panel.show(items, coords);
     this.editorPane.setCompletionPanelVisible(true);
   }
@@ -156,25 +160,52 @@ export default class EditorController extends EventEmitter {
    * 수동 자동완성 트리거 (Ctrl+Space)
    */
   triggerCompletion() {
-    if (!this.editorPane) return;
+    if (!this.editorPane || !this.current_document) return;
 
-    const cursorPos = this.editorPane._getCursorPosition?.();
+    const cursorPos = this.editorPane.getCursorPosition();
     if (!cursorPos) return;
 
-    const currentLine = this.current_document?.getLine(cursorPos.line);
+    const currentLine = this.current_document.getLine(cursorPos.line);
     if (!currentLine) return;
 
     const beforeCursor = currentLine.substring(0, cursorPos.column);
+
+    // 'this.' 패턴
+    const thisMatch = beforeCursor.match(/\bthis\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+
+    // 'obj.' 패턴
+    const objMatch = beforeCursor.match(/\b([a-z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+
+    // 일반 식별자
     const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
-    const prefix = prefixMatch ? prefixMatch[0] : '';
+
+    let prefix = '';
+    let contextType = 'global';
+    let objectName = null;
+
+    if (thisMatch) {
+      prefix = thisMatch[1];
+      contextType = 'this';
+    } else if (objMatch) {
+      objectName = objMatch[1];
+      prefix = objMatch[2];
+      contextType = 'object';
+    } else if (prefixMatch) {
+      prefix = prefixMatch[0];
+    }
 
     this.#handleCompletionTrigger({
       line: cursorPos.line,
       column: cursorPos.column,
       prefix: prefix,
+      contextType: contextType,
+      objectName: objectName,
     });
   }
 
+  /**
+   * 언어 감지
+   */
   #detectLanguage() {
     if (!this.current_document || !this.current_document.file_node) {
       return 'plaintext';
@@ -191,31 +222,21 @@ export default class EditorController extends EventEmitter {
     return langMap[ext] || 'plaintext';
   }
 
-  /**
-   * 검색 패널 표시
-   */
+  // 검색 관련 메서드들 (동일)
   showSearch() {
     if (!this.search_panel) return;
-
     this.search_panel.show();
     this.search_panel.setMode('search');
     this.search_panel.focus();
   }
 
-  /**
-   * 바꾸기 패널 표시
-   */
   showReplace() {
     if (!this.search_panel) return;
-
     this.search_panel.show();
     this.search_panel.setMode('replace');
     this.search_panel.focus();
   }
 
-  /**
-   * 검색 수행
-   */
   #performSearch(_query, _options) {
     if (!this.current_document || !_query) {
       this.current_search_results = [];
@@ -225,7 +246,6 @@ export default class EditorController extends EventEmitter {
       return;
     }
 
-    // 정규식 검증
     if (_options.regex) {
       const validation = this.searchService.validateRegex(_query);
       if (!validation.valid) {
@@ -251,33 +271,20 @@ export default class EditorController extends EventEmitter {
     this.search_panel.updateResults(this.current_search_results, this.current_search_index);
   }
 
-  /**
-   * 다음 찾기
-   */
   #findNext() {
     if (this.current_search_results.length === 0) return;
-
     this.current_search_index = (this.current_search_index + 1) % this.current_search_results.length;
-
     this.editorPane.highlightSearchResults(this.current_search_results, this.current_search_index);
     this.search_panel.updateResults(this.current_search_results, this.current_search_index);
   }
 
-  /**
-   * 이전 찾기
-   */
   #findPrevious() {
     if (this.current_search_results.length === 0) return;
-
     this.current_search_index = (this.current_search_index - 1 + this.current_search_results.length) % this.current_search_results.length;
-
     this.editorPane.highlightSearchResults(this.current_search_results, this.current_search_index);
     this.search_panel.updateResults(this.current_search_results, this.current_search_index);
   }
 
-  /**
-   * 하나 바꾸기
-   */
   #replaceOne(_replacement) {
     if (!this.current_document || this.current_search_results.length === 0) return;
     if (this.current_search_index < 0) return;
@@ -286,21 +293,16 @@ export default class EditorController extends EventEmitter {
     const oldText = this.current_document.getText();
     const newText = this.searchService.replaceOne(oldText, result, _replacement);
 
-    // Document 업데이트
     this.current_document.content = newText;
     this.current_document.lines = newText.split('\n');
     this.current_document.is_dirty = true;
 
-    // 검색 다시 수행 (인덱스 변경됨)
     const lastSearch = this.searchService.getLastSearch();
     if (lastSearch) {
       this.#performSearch(lastSearch.query, lastSearch.options);
     }
   }
 
-  /**
-   * 전체 바꾸기
-   */
   #replaceAll(_query, _replacement, _options) {
     if (!this.current_document || !_query) return;
 
@@ -312,12 +314,10 @@ export default class EditorController extends EventEmitter {
       return;
     }
 
-    // Document 업데이트
     this.current_document.content = result.newText;
     this.current_document.lines = result.newText.split('\n');
     this.current_document.is_dirty = true;
 
-    // 검색 결과 초기화
     this.current_search_results = [];
     this.current_search_index = -1;
     this.editorPane.clearSearchHighlights();
@@ -326,19 +326,7 @@ export default class EditorController extends EventEmitter {
     this.emit('status-message', `${result.count}개 항목을 바꿨습니다.`);
   }
 
-  // 기존 메서드들...
-  setEditorPane(_editorPane) {
-    this.editorPane = _editorPane;
-
-    this.editorPane.on('content-changed', ({ document }) => {
-      this.emit('content-changed', document);
-    });
-
-    this.editorPane.on('save-requested', (_document) => {
-      this.saveDocument(_document);
-    });
-  }
-
+  // Document 관련
   displayDocument(_document) {
     this.current_document = _document;
 
@@ -346,11 +334,6 @@ export default class EditorController extends EventEmitter {
       this.editorPane.setDocument(_document);
     }
 
-    if (_document) {
-      this.historyService.initHistory(_document);
-    }
-
-    // 검색 결과 초기화
     this.current_search_results = [];
     this.current_search_index = -1;
 
@@ -384,46 +367,6 @@ export default class EditorController extends EventEmitter {
     for (const doc of dirtyDocs) {
       await this.saveDocument(doc);
     }
-  }
-
-  /**
-   * Undo 실행
-   */
-  undo() {
-    if (!this.current_document) return;
-
-    const success = this.historyService.undo(this.current_document);
-
-    if (success) {
-      this.emit('status-message', 'Undo');
-    }
-  }
-
-  /**
-   * Redo 실행
-   */
-  redo() {
-    if (!this.current_document) return;
-
-    const success = this.historyService.redo(this.current_document);
-
-    if (success) {
-      this.emit('status-message', 'Redo');
-    }
-  }
-
-  /**
-   * Undo 가능 여부
-   */
-  canUndo() {
-    return this.current_document && this.historyService.canUndo(this.current_document);
-  }
-
-  /**
-   * Redo 가능 여부
-   */
-  canRedo() {
-    return this.current_document && this.historyService.canRedo(this.current_document);
   }
 
   getCurrentDocument() {

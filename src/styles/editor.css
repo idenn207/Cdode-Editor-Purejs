@@ -52,6 +52,15 @@
 .code-line {
   min-height: 22.4px;
   white-space: pre;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+
+/* 활성 줄 하이라이트 */
+.code-line.active-line {
+  border-top: 1px solid #3e3e42;
+  border-bottom: 1px solid #3e3e42;
+  background-color: rgba(255, 255, 255, 0.02);
 }
 
 .empty-editor {

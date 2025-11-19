@@ -3,10 +3,8 @@
  * 기능: 자동완성 제안 생성
  * 책임: 코드 컨텍스트 분석 및 자동완성 항목 제공
  */
-
 import { LANGUAGE_CSS, LANGUAGE_HTML, LANGUAGE_JAVASCRIPT, LANGUAGE_MARKDOWN } from '../constants/Languages.js';
 
-// 자동완성 항목 종류
 export const COMPLETION_KIND_KEYWORD = 'keyword';
 export const COMPLETION_KIND_VARIABLE = 'variable';
 export const COMPLETION_KIND_FUNCTION = 'function';
@@ -22,45 +20,275 @@ export default class CompletionService {
   }
 
   /**
-   * 자동완성 항목 가져오기
-   * @param {Document} _document - 현재 문서
-   * @param {number} _line - 커서 줄 번호
-   * @param {number} _column - 커서 열 번호
-   * @param {string} _language - 언어
-   * @returns {Array} - 자동완성 항목 배열
+   * 자동완성 항목 가져오기 - 수정됨
    */
-  getCompletions(_document, _line, _column, _language) {
+  getCompletions(_document, _line, _column, _language, _contextType = 'normal', _objectName = null) {
     if (!_document || _line < 0 || _column < 0) {
       return [];
     }
 
-    // 현재 줄 텍스트
     const currentLine = _document.getLine(_line) || '';
-
-    // 커서 앞 텍스트에서 접두사 추출
     const prefix = this.#extractPrefix(currentLine, _column);
 
+    // 'this.' 패턴
+    if (_contextType === 'this') {
+      return this.#getThisMemberCompletions(_document, _language, prefix, _line);
+    }
+
+    // 'obj.' 패턴
+    if (_contextType === 'object' && _objectName) {
+      return this.#getObjectMemberCompletions(_document, _language, prefix, _objectName, _line);
+    }
+
+    // 일반 자동완성
     if (!prefix || prefix.length < 1) {
       return [];
     }
 
-    // 모든 완성 항목 수집
     const completions = [];
 
     // 1. 키워드
     const keywords = this.#getKeywordCompletions(_language, prefix);
     completions.push(...keywords);
 
-    // 2. 사용자 정의 심볼 (변수, 함수, 클래스)
-    const symbols = this.#getSymbolCompletions(_document, _language, prefix);
+    // 2. 사용자 정의 심볼
+    const symbols = this.#getSymbolCompletions(_document, _language, prefix, _line);
     completions.push(...symbols);
 
     // 3. 코드 스니펫
     const snippets = this.#getSnippetCompletions(_language, prefix);
     completions.push(...snippets);
 
-    // 중복 제거 및 정렬
-    return this.#sortCompletions(this.#deduplicateCompletions(completions));
+    return this.#sortCompletions(this.#deduplicateCompletions(completions), prefix);
+  }
+
+  /**
+   * 객체 멤버 자동완성 - 새로 추가
+   */
+  #getObjectMemberCompletions(_document, _language, _prefix, _objectName, _currentLine) {
+    if (_language !== LANGUAGE_JAVASCRIPT) return [];
+
+    const text = _document.getText();
+    const lines = text.split('\n');
+    const scopeText = lines.slice(0, _currentLine + 1).join('\n');
+
+    const members = [];
+    const seen = new Set();
+
+    // 객체 리터럴 찾기: const obj = { prop: value, method() {} }
+    const objLiteralPattern = new RegExp(`\\b${_objectName}\\s*=\\s*\\{([^}]+)\\}`, 'g');
+
+    let match;
+    while ((match = objLiteralPattern.exec(scopeText)) !== null) {
+      const objBody = match[1];
+
+      // 프로퍼티 추출: prop: value
+      const propPattern = /([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g;
+      let propMatch;
+      while ((propMatch = propPattern.exec(objBody)) !== null) {
+        const name = propMatch[1];
+        if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+          members.push({
+            label: name,
+            kind: COMPLETION_KIND_PROPERTY,
+            insertText: name,
+            detail: 'Property',
+            sortText: `1_${name}`,
+          });
+          seen.add(name);
+        }
+      }
+
+      // 메서드 추출: method() {}
+      const methodPattern = /([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\([^)]*\)\s*\{/g;
+      let methodMatch;
+      while ((methodMatch = methodPattern.exec(objBody)) !== null) {
+        const name = methodMatch[1];
+        if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+          members.push({
+            label: name,
+            kind: COMPLETION_KIND_METHOD,
+            insertText: `${name}()`,
+            detail: 'Method',
+            sortText: `2_${name}`,
+          });
+          seen.add(name);
+        }
+      }
+    }
+
+    // obj.prop = value 패턴
+    const dotPropPattern = new RegExp(`\\b${_objectName}\\.([a-zA-Z_$][a-zA-Z0-9_$]*)`, 'g');
+
+    while ((match = dotPropPattern.exec(scopeText)) !== null) {
+      const name = match[1];
+      if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+        members.push({
+          label: name,
+          kind: COMPLETION_KIND_PROPERTY,
+          insertText: name,
+          detail: 'Property',
+          sortText: `1_${name}`,
+        });
+        seen.add(name);
+      }
+    }
+
+    return members;
+  }
+
+  /**
+   * this 멤버 자동완성
+   */
+  #getThisMemberCompletions(_document, _language, _prefix, _currentLine) {
+    if (_language !== LANGUAGE_JAVASCRIPT) return [];
+
+    const text = _document.getText();
+    const lines = text.split('\n');
+    const scopeText = lines.slice(0, _currentLine + 1).join('\n');
+
+    const members = [];
+    const seen = new Set();
+
+    // 현재 클래스 찾기
+    const classMatch = scopeText.match(/class\s+([A-Z][a-zA-Z0-9_]*)\s*{/);
+    if (!classMatch) return [];
+
+    // this.property = value
+    const propertyPattern = /\bthis\.([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/g;
+    let match;
+    while ((match = propertyPattern.exec(scopeText)) !== null) {
+      const name = match[1];
+      if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+        members.push({
+          label: name,
+          kind: COMPLETION_KIND_PROPERTY,
+          insertText: name,
+          detail: 'Property',
+          sortText: `1_${name}`,
+        });
+        seen.add(name);
+      }
+    }
+
+    // 메서드 (class 내부)
+    const methodPattern = /^\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\([^)]*\)\s*\{/gm;
+    while ((match = methodPattern.exec(scopeText)) !== null) {
+      const name = match[1];
+      if (!this.#isKeyword(name) && !seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+        members.push({
+          label: name,
+          kind: COMPLETION_KIND_METHOD,
+          insertText: `${name}()`,
+          detail: 'Method',
+          sortText: `2_${name}`,
+        });
+        seen.add(name);
+      }
+    }
+
+    return members;
+  }
+
+  /**
+   * 정렬 - 수정됨
+   */
+  #sortCompletions(_completions, _prefix) {
+    return _completions.sort((_a, _b) => {
+      // 정확히 일치하는 항목 우선
+      const aExact = _a.label === _prefix ? -1 : 0;
+      const bExact = _b.label === _prefix ? -1 : 0;
+
+      if (aExact !== bExact) return aExact - bExact;
+
+      // sortText로 정렬
+      return _a.sortText.localeCompare(_b.sortText);
+    });
+  }
+
+  /**
+   * 심볼 자동완성
+   */
+  #getSymbolCompletions(_document, _language, _prefix, _currentLine) {
+    const text = _document.getText();
+    const lines = text.split('\n');
+    const scopeText = lines.slice(0, _currentLine + 1).join('\n');
+
+    const symbols = [];
+    const seen = new Set();
+
+    if (_language === LANGUAGE_JAVASCRIPT) {
+      // 1. 변수 (우선순위 1)
+      const varPattern = /\b(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
+      let match;
+      while ((match = varPattern.exec(scopeText)) !== null) {
+        const name = match[1];
+        if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+          const isExactMatch = name === _prefix;
+          symbols.push({
+            name: name,
+            kind: COMPLETION_KIND_VARIABLE,
+            sortText: isExactMatch ? `0_${name}` : `1_${name}`,
+          });
+          seen.add(name);
+        }
+      }
+
+      // 2. 함수 (우선순위 2)
+      const funcPattern = /\bfunction\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
+      while ((match = funcPattern.exec(scopeText)) !== null) {
+        const name = match[1];
+        if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+          const isExactMatch = name === _prefix;
+          symbols.push({
+            name: name,
+            kind: COMPLETION_KIND_FUNCTION,
+            insertText: `${name}()`,
+            sortText: isExactMatch ? `0_${name}` : `2_${name}`,
+          });
+          seen.add(name);
+        }
+      }
+
+      // 3. 클래스 (우선순위 3)
+      const classPattern = /\bclass\s+([A-Z][a-zA-Z0-9_]*)/g;
+      while ((match = classPattern.exec(scopeText)) !== null) {
+        const name = match[1];
+        if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+          const isExactMatch = name === _prefix;
+          symbols.push({
+            name: name,
+            kind: COMPLETION_KIND_CLASS,
+            sortText: isExactMatch ? `0_${name}` : `3_${name}`,
+          });
+          seen.add(name);
+        }
+      }
+
+      // 4. 화살표 함수
+      const arrowPattern = /\b(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=>/g;
+      while ((match = arrowPattern.exec(scopeText)) !== null) {
+        const name = match[1];
+        if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+          const isExactMatch = name === _prefix;
+          symbols.push({
+            name: name,
+            kind: COMPLETION_KIND_FUNCTION,
+            insertText: `${name}()`,
+            sortText: isExactMatch ? `0_${name}` : `2_${name}`,
+          });
+          seen.add(name);
+        }
+      }
+    }
+
+    return symbols.map((_sym) => ({
+      label: _sym.name,
+      kind: _sym.kind,
+      insertText: _sym.insertText || _sym.name,
+      detail: this.#getKindLabel(_sym.kind),
+      sortText: _sym.sortText,
+    }));
   }
 
   /**
@@ -70,11 +298,17 @@ export default class CompletionService {
     if (_column === 0) return '';
 
     const beforeCursor = _lineText.substring(0, _column);
-
-    // 단어 경계까지 역방향 추출
     const match = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
 
     return match ? match[0] : '';
+  }
+
+  /**
+   * 키워드 확인
+   */
+  #isKeyword(_name) {
+    const jsKeywords = this.keywords[LANGUAGE_JAVASCRIPT] || [];
+    return jsKeywords.includes(_name);
   }
 
   /**
@@ -90,25 +324,7 @@ export default class CompletionService {
         kind: COMPLETION_KIND_KEYWORD,
         insertText: _kw,
         detail: 'Keyword',
-        sortText: `0_${_kw}`, // 키워드 우선순위 높음
-      }));
-  }
-
-  /**
-   * 심볼 자동완성 (변수, 함수, 클래스)
-   */
-  #getSymbolCompletions(_document, _language, _prefix) {
-    const text = _document.getText();
-    const symbols = this.#extractSymbols(text, _language);
-
-    return symbols
-      .filter((_sym) => _sym.name.toLowerCase().startsWith(_prefix.toLowerCase()))
-      .map((_sym) => ({
-        label: _sym.name,
-        kind: _sym.kind,
-        insertText: _sym.insertText || _sym.name,
-        detail: this.#getKindLabel(_sym.kind),
-        sortText: `1_${_sym.name}`, // 심볼은 중간 우선순위
+        sortText: `3_${_kw}`, // 우선순위 낮춤
       }));
   }
 
@@ -125,58 +341,8 @@ export default class CompletionService {
         kind: COMPLETION_KIND_SNIPPET,
         insertText: _snip.body,
         detail: _snip.description,
-        sortText: `2_${_snip.prefix}`, // 스니펫은 낮은 우선순위
+        sortText: `4_${_snip.prefix}`, // 우선순위 낮춤
       }));
-  }
-
-  /**
-   * 문서에서 심볼 추출
-   */
-  #extractSymbols(_text, _language) {
-    const symbols = [];
-
-    if (_language === LANGUAGE_JAVASCRIPT) {
-      // 변수 (const, let, var)
-      const varPattern = /\b(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
-      let match;
-      while ((match = varPattern.exec(_text)) !== null) {
-        symbols.push({
-          name: match[1],
-          kind: COMPLETION_KIND_VARIABLE,
-        });
-      }
-
-      // 함수 (function declarations)
-      const funcPattern = /\bfunction\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
-      while ((match = funcPattern.exec(_text)) !== null) {
-        symbols.push({
-          name: match[1],
-          kind: COMPLETION_KIND_FUNCTION,
-          insertText: `${match[1]}()`,
-        });
-      }
-
-      // 클래스
-      const classPattern = /\bclass\s+([A-Z][a-zA-Z0-9_]*)/g;
-      while ((match = classPattern.exec(_text)) !== null) {
-        symbols.push({
-          name: match[1],
-          kind: COMPLETION_KIND_CLASS,
-        });
-      }
-
-      // 화살표 함수 (const funcName = () => {})
-      const arrowPattern = /\b(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=>/g;
-      while ((match = arrowPattern.exec(_text)) !== null) {
-        symbols.push({
-          name: match[1],
-          kind: COMPLETION_KIND_FUNCTION,
-          insertText: `${match[1]}()`,
-        });
-      }
-    }
-
-    return symbols;
   }
 
   /**
@@ -190,15 +356,6 @@ export default class CompletionService {
       }
       seen.add(_comp.label);
       return true;
-    });
-  }
-
-  /**
-   * 정렬 (sortText 기준)
-   */
-  #sortCompletions(_completions) {
-    return _completions.sort((_a, _b) => {
-      return _a.sortText.localeCompare(_b.sortText);
     });
   }
 
@@ -218,9 +375,6 @@ export default class CompletionService {
     return labels[_kind] || '';
   }
 
-  /**
-   * 언어별 키워드 초기화
-   */
   #initializeKeywords() {
     return {
       [LANGUAGE_JAVASCRIPT]: [
@@ -327,52 +481,17 @@ export default class CompletionService {
     };
   }
 
-  /**
-   * 언어별 스니펫 초기화
-   */
   #initializeSnippets() {
     return {
       [LANGUAGE_JAVASCRIPT]: [
-        {
-          prefix: 'log',
-          body: 'console.log();',
-          description: 'Console log',
-        },
-        {
-          prefix: 'func',
-          body: 'function name() {\n  \n}',
-          description: 'Function declaration',
-        },
-        {
-          prefix: 'arrow',
-          body: 'const name = () => {\n  \n};',
-          description: 'Arrow function',
-        },
-        {
-          prefix: 'class',
-          body: 'class ClassName {\n  constructor() {\n    \n  }\n}',
-          description: 'Class declaration',
-        },
-        {
-          prefix: 'if',
-          body: 'if (condition) {\n  \n}',
-          description: 'If statement',
-        },
-        {
-          prefix: 'for',
-          body: 'for (let i = 0; i < length; i++) {\n  \n}',
-          description: 'For loop',
-        },
-        {
-          prefix: 'foreach',
-          body: 'array.forEach((item) => {\n  \n});',
-          description: 'ForEach loop',
-        },
-        {
-          prefix: 'try',
-          body: 'try {\n  \n} catch (error) {\n  \n}',
-          description: 'Try-catch block',
-        },
+        { prefix: 'log', body: 'console.log();', description: 'Console log' },
+        { prefix: 'func', body: 'function name() {\n  \n}', description: 'Function declaration' },
+        { prefix: 'arrow', body: 'const name = () => {\n  \n};', description: 'Arrow function' },
+        { prefix: 'class', body: 'class ClassName {\n  constructor() {\n    \n  }\n}', description: 'Class declaration' },
+        { prefix: 'if', body: 'if (condition) {\n  \n}', description: 'If statement' },
+        { prefix: 'for', body: 'for (let i = 0; i < length; i++) {\n  \n}', description: 'For loop' },
+        { prefix: 'foreach', body: 'array.forEach((item) => {\n  \n});', description: 'ForEach loop' },
+        { prefix: 'try', body: 'try {\n  \n} catch (error) {\n  \n}', description: 'Try-catch block' },
       ],
       [LANGUAGE_HTML]: [
         {
@@ -380,11 +499,7 @@ export default class CompletionService {
           body: '<!DOCTYPE html>\n<html lang="ko">\n<head>\n  <meta charset="UTF-8">\n  <title>Document</title>\n</head>\n<body>\n  \n</body>\n</html>',
           description: 'HTML5 template',
         },
-        {
-          prefix: 'div',
-          body: '<div></div>',
-          description: 'Div element',
-        },
+        { prefix: 'div', body: '<div></div>', description: 'Div element' },
       ],
       [LANGUAGE_CSS]: [],
       [LANGUAGE_MARKDOWN]: [],

@@ -177,21 +177,6 @@ class Application {
       this.controllers.editor.triggerCompletion();
     });
 
-    // Undo
-    this.keyBindings.register('ctrl+z', () => {
-      this.controllers.editor.undo();
-    });
-
-    // Redo
-    this.keyBindings.register('ctrl+y', () => {
-      this.controllers.editor.redo();
-    });
-
-    // Redo 대안
-    this.keyBindings.register('ctrl+shift+z', () => {
-      this.controllers.editor.redo();
-    });
-
     console.log('⌨️ 키보드 단축키 등록 완료:', this.keyBindings.getBindings());
   }
 

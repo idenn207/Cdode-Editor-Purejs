@@ -5,22 +5,22 @@
 
 .completion-panel {
   position: absolute;
-  width: 320px;
-  max-height: 220px;
+  width: 280px; /* 420px → 280px */
+  max-height: 180px; /* 220px → 180px */
   overflow-y: auto;
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  border-radius: 3px; /* 4px → 3px */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4); /* 간소화 */
   z-index: 200;
-  font-size: 13px;
+  font-size: 12px; /* 13px → 12px */
 }
 
 .completion-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
+  gap: 6px; /* 8px → 6px */
+  padding: 3px 6px; /* 4px 8px → 3px 6px */
   cursor: pointer;
   transition: background-color 0.1s;
 }
@@ -34,16 +34,16 @@
 }
 
 .completion-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px; /* 18px → 16px */
+  height: 16px; /* 18px → 16px */
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: bold;
-  font-size: 11px;
+  font-size: 10px; /* 11px → 10px */
   color: var(--text-accent);
   background-color: rgba(79, 195, 247, 0.2);
-  border-radius: 3px;
+  border-radius: 2px; /* 3px → 2px */
   flex-shrink: 0;
 }
 
@@ -53,17 +53,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px; /* 추가 */
 }
 
 .completion-detail {
-  font-size: 11px;
+  font-size: 10px; /* 11px → 10px */
   color: var(--text-secondary);
   flex-shrink: 0;
 }
 
 /* 스크롤바 */
 .completion-panel::-webkit-scrollbar {
-  width: 8px;
+  width: 6px; /* 8px → 6px */
 }
 
 .completion-panel::-webkit-scrollbar-track {
@@ -72,7 +73,7 @@
 
 .completion-panel::-webkit-scrollbar-thumb {
   background: #424242;
-  border-radius: 4px;
+  border-radius: 3px; /* 4px → 3px */
 }
 
 .completion-panel::-webkit-scrollbar-thumb:hover {
