@@ -1,0 +1,158 @@
+/**
+ * styles/theme.css
+ * 
+ * VSCode Dark Theme Colors
+ */
+
+:root {
+  /* Background Colors */
+  --color-bg-primary: #1e1e1e;
+  --color-bg-secondary: #252526;
+  --color-bg-tertiary: #2d2d30;
+  --color-bg-hover: #2a2d2e;
+  --color-bg-active: #37373d;
+  --color-bg-selected: #094771;
+
+  /* Foreground Colors */
+  --color-fg-primary: #d4d4d4;
+  --color-fg-secondary: #cccccc;
+  --color-fg-muted: #858585;
+  --color-fg-disabled: #656565;
+
+  /* Border Colors */
+  --color-border-primary: #3e3e42;
+  --color-border-secondary: #2d2d30;
+  --color-border-focus: #007acc;
+
+  /* Accent Colors */
+  --color-accent-primary: #007acc;
+  --color-accent-hover: #0098ff;
+  --color-accent-active: #005a9e;
+
+  /* Syntax Highlighting */
+  --color-syntax-keyword: #569cd6;
+  --color-syntax-string: #ce9178;
+  --color-syntax-number: #b5cea8;
+  --color-syntax-comment: #6a9955;
+  --color-syntax-function: #dcdcaa;
+  --color-syntax-variable: #9cdcfe;
+  --color-syntax-class: #4ec9b0;
+  --color-syntax-operator: #d4d4d4;
+  --color-syntax-property: #9cdcfe;
+  --color-syntax-constant: #4fc1ff;
+
+  /* Status Colors */
+  --color-error: #f48771;
+  --color-warning: #cca700;
+  --color-success: #89d185;
+  --color-info: #75beff;
+
+  /* UI Elements */
+  --color-tab-active-bg: #1e1e1e;
+  --color-tab-inactive-bg: #2d2d30;
+  --color-tab-border: #252526;
+  --color-tab-hover-bg: #2a2d2e;
+
+  --color-sidebar-bg: #252526;
+  --color-sidebar-header-bg: #2d2d30;
+
+  --color-editor-bg: #1e1e1e;
+  --color-editor-line-number: #858585;
+  --color-editor-line-number-active: #c6c6c6;
+  --color-editor-selection: #264f78;
+  --color-editor-cursor: #aeafad;
+
+  --color-menu-bg: #252526;
+  --color-menu-hover-bg: #2a2d2e;
+
+  /* Shadows */
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.4);
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  /* Typography */
+  --font-family-base: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Roboto', 'Helvetica Neue', sans-serif;
+  --font-family-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
+
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --line-height-tight: 1.2;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.8;
+
+  /* Sizes */
+  --header-height: 35px;
+  --tab-bar-height: 35px;
+  --sidebar-width: 250px;
+  --line-number-width: 60px;
+
+  /* Transitions */
+  --transition-fast: 0.1s ease;
+  --transition-base: 0.2s ease;
+  --transition-slow: 0.3s ease;
+
+  /* Z-index */
+  --z-index-base: 1;
+  --z-index-dropdown: 100;
+  --z-index-modal: 1000;
+  --z-index-toast: 2000;
+  --z-index-spinner: 3000;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(121, 121, 121, 0.4);
+  border: 4px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(100, 100, 100, 0.7);
+}
+
+::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background-color: transparent;
+}
+
+/* Firefox Scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(121, 121, 121, 0.4) transparent;
+}
+
+/* Selection */
+::selection {
+  background-color: var(--color-editor-selection);
+  color: var(--color-fg-primary);
+}
+
+::-moz-selection {
+  background-color: var(--color-editor-selection);
+  color: var(--color-fg-primary);
+}

@@ -4,20 +4,230 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Web Code Editor</title>
-  <link rel="stylesheet" href="src/styles/main.css">
+  <meta name="description" content="VSCode와 같은 웹 기반 코드 에디터">
+  <meta name="author" content="CodeEditor Team">
+  <title>CodeEditor - Web-based Code Editor</title>
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="styles/reset.css">
+  <link rel="stylesheet" href="styles/theme.css">
+  <link rel="stylesheet" href="styles/main.css">
+  <link rel="stylesheet" href="styles/components.css">
 </head>
 
 <body>
+  <!-- Main Application Container -->
   <div id="App" class="app-container">
-    <div id="Sidebar" class="sidebar"></div>
+
+    <!-- Header / Menu Bar -->
+    <header id="MenuBar" class="menu-bar">
+      <div class="menu-bar__left">
+        <div class="logo">
+          <span class="logo__icon">📝</span>
+          <span class="logo__text">CodeEditor</span>
+        </div>
+        <nav class="menu-nav">
+          <button class="menu-nav__item" id="MenuFile">파일</button>
+          <button class="menu-nav__item" id="MenuEdit">편집</button>
+          <button class="menu-nav__item" id="MenuView">보기</button>
+          <button class="menu-nav__item" id="MenuHelp">도움말</button>
+        </nav>
+      </div>
+      <div class="menu-bar__right">
+        <div class="status-indicators">
+          <span class="status-indicator" id="StatusLanguage">JavaScript</span>
+          <span class="status-indicator" id="StatusEncoding">UTF-8</span>
+          <span class="status-indicator" id="StatusPosition">Ln 1, Col 1</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
     <div class="main-content">
-      <div id="TabBar" class="tab-bar"></div>
-      <div id="EditorContainer" class="editor-container"></div>
-      <div id="StatusBar" class="status-bar"></div>
+
+      <!-- Sidebar / File Explorer -->
+      <aside id="Sidebar" class="sidebar">
+        <div class="sidebar__header">
+          <h2 class="sidebar__title">파일 탐색기</h2>
+          <div class="sidebar__actions">
+            <button class="icon-button" id="BtnNewFile" title="새 파일">
+              <span>📄</span>
+            </button>
+            <button class="icon-button" id="BtnNewFolder" title="새 폴더">
+              <span>📁</span>
+            </button>
+            <button class="icon-button" id="BtnRefresh" title="새로고침">
+              <span>🔄</span>
+            </button>
+            <button class="icon-button" id="BtnCollapse" title="모두 접기">
+              <span>⬆️</span>
+            </button>
+          </div>
+        </div>
+        <div class="sidebar__content">
+          <div class="empty-state" id="EmptyFileTree">
+            <div class="empty-state__icon">📂</div>
+            <div class="empty-state__text">폴더를 열어주세요</div>
+            <button class="button button--primary" id="BtnOpenFolder">
+              폴더 열기
+            </button>
+          </div>
+          <div class="file-tree" id="FileTree" style="display: none;">
+            <!-- 파일 트리가 여기에 렌더링됩니다 -->
+          </div>
+        </div>
+      </aside>
+
+      <!-- Editor Area -->
+      <main class="editor-area">
+
+        <!-- Tab Bar -->
+        <div id="TabBar" class="tab-bar">
+          <div class="tab-bar__tabs" id="TabList">
+            <!-- 탭이 여기에 렌더링됩니다 -->
+          </div>
+          <div class="tab-bar__actions">
+            <button class="icon-button icon-button--small" id="BtnSplitEditor" title="에디터 분할">
+              <span>⊞</span>
+            </button>
+            <button class="icon-button icon-button--small" id="BtnCloseAll" title="모두 닫기">
+              <span>✕</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Editor Pane -->
+        <div id="EditorPane" class="editor-pane">
+          <div class="editor-pane__container">
+            <!-- Line Numbers -->
+            <div class="line-numbers" id="LineNumbers">
+              <!-- 줄 번호가 여기에 렌더링됩니다 -->
+            </div>
+
+            <!-- Editor Content -->
+            <div class="editor-content-wrapper">
+              <pre class="editor-content" id="EditorContent" contenteditable="true" spellcheck="false"
+                autocomplete="off" autocorrect="off" autocapitalize="off">
+                                <!-- 코드 내용이 여기에 렌더링됩니다 -->
+                            </pre>
+            </div>
+          </div>
+
+          <!-- Empty State -->
+          <div class="empty-state empty-state--editor" id="EmptyEditor">
+            <div class="empty-state__icon">📝</div>
+            <div class="empty-state__text">파일을 열거나 새로 만들어주세요</div>
+            <div class="empty-state__shortcuts">
+              <div class="shortcut-item">
+                <kbd>Ctrl</kbd> + <kbd>O</kbd>
+                <span>파일 열기</span>
+              </div>
+              <div class="shortcut-item">
+                <kbd>Ctrl</kbd> + <kbd>N</kbd>
+                <span>새 파일</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </main>
     </div>
+
+    <!-- Floating Panels -->
+
+    <!-- Completion Panel -->
+    <div id="CompletionPanel" class="completion-panel" style="display: none;">
+      <div class="completion-panel__list" id="CompletionList">
+        <!-- 자동완성 항목이 여기에 렌더링됩니다 -->
+      </div>
+    </div>
+
+    <!-- Search Panel -->
+    <div id="SearchPanel" class="search-panel" style="display: none;">
+      <div class="search-panel__header">
+        <h3 class="search-panel__title">검색</h3>
+        <button class="icon-button icon-button--small" id="BtnCloseSearch">
+          <span>✕</span>
+        </button>
+      </div>
+      <div class="search-panel__content">
+        <!-- Search Input -->
+        <div class="search-input-group">
+          <input type="text" class="search-input" id="SearchInput" placeholder="검색어를 입력하세요" autocomplete="off">
+          <div class="search-options">
+            <label class="checkbox-label">
+              <input type="checkbox" id="SearchCaseSensitive">
+              <span>대소문자 구분 (Aa)</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="SearchWholeWord">
+              <span>단어 단위 (ab)</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="SearchRegex">
+              <span>정규식 (.*)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Replace Input (toggle) -->
+        <div class="search-input-group" id="ReplaceGroup" style="display: none;">
+          <input type="text" class="search-input" id="ReplaceInput" placeholder="바꿀 내용" autocomplete="off">
+          <div class="search-actions">
+            <button class="button button--small" id="BtnReplace">바꾸기</button>
+            <button class="button button--small" id="BtnReplaceAll">모두 바꾸기</button>
+          </div>
+        </div>
+
+        <!-- Results -->
+        <div class="search-results">
+          <div class="search-results__info" id="SearchResultsInfo">
+            <!-- 검색 결과 정보가 여기에 표시됩니다 -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="ContextMenu" class="context-menu" style="display: none;">
+      <ul class="context-menu__list" id="ContextMenuList">
+        <!-- 컨텍스트 메뉴 항목이 여기에 렌더링됩니다 -->
+      </ul>
+    </div>
+
+    <!-- Modal Dialog -->
+    <div id="ModalOverlay" class="modal-overlay" style="display: none;">
+      <div class="modal">
+        <div class="modal__header">
+          <h3 class="modal__title" id="ModalTitle">제목</h3>
+          <button class="icon-button icon-button--small" id="BtnCloseModal">
+            <span>✕</span>
+          </button>
+        </div>
+        <div class="modal__content" id="ModalContent">
+          <!-- 모달 내용이 여기에 렌더링됩니다 -->
+        </div>
+        <div class="modal__footer">
+          <button class="button" id="ModalCancelBtn">취소</button>
+          <button class="button button--primary" id="ModalConfirmBtn">확인</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="ToastContainer" class="toast-container">
+      <!-- 토스트 알림이 여기에 렌더링됩니다 -->
+    </div>
+
   </div>
 
+  <!-- Loading Spinner -->
+  <div id="LoadingSpinner" class="loading-spinner" style="display: none;">
+    <div class="spinner"></div>
+    <div class="loading-text">로딩 중...</div>
+  </div>
+
+  <!-- Scripts -->
   <script type="module" src="src/app.js"></script>
 </body>
 
