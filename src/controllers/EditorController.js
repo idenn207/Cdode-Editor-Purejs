@@ -1,381 +1,180 @@
 /**
  * 파일: src/controllers/EditorController.js
- * 수정: 이벤트 리스너 순서 조정, 디버깅 추가
+ * 기능: 편집 로직 관리 및 TabController-EditorPane 연결
+ * 책임:
+ * - Document를 EditorPane에 표시
+ * - Document 저장
+ * - 편집 관련 이벤트 조율
  */
 
-import CompletionService from '../services/CompletionService.js';
-import SearchService from '../services/SearchService.js';
-import EventEmitter from '../utils/EventEmitter.js';
+import BaseController from '../core/BaseController.js';
+import ValidationUtils from '../utils/ValidationUtils.js';
 
-export default class EditorController extends EventEmitter {
+export default class EditorController extends BaseController {
   constructor(_tabController, _fileSystemService) {
     super();
-    this.tabController = _tabController;
-    this.fileSystemService = _fileSystemService;
+
+    ValidationUtils.assertNonNull(_tabController, 'TabController');
+    ValidationUtils.assertNonNull(_fileSystemService, 'FileSystemService');
+
+    this.registerService('tabController', _tabController);
+    this.registerService('fileSystemService', _fileSystemService);
+
+    this.editor_pane = null;
     this.current_document = null;
-    this.editorPane = null;
-
-    // 검색 관련
-    this.searchService = new SearchService();
-    this.search_panel = null;
-    this.current_search_results = [];
-    this.current_search_index = -1;
-
-    // 자동완성
-    this.completionService = new CompletionService();
-    this.completion_panel = null;
   }
 
   /**
-   * SearchPanel 설정
+   * 컨트롤러 초기화
    */
-  setSearchPanel(_searchPanel) {
-    this.search_panel = _searchPanel;
+  initialize() {
+    super.initialize();
 
-    this.search_panel.on('search-changed', (_query, _options) => {
-      this.#performSearch(_query, _options);
+    const tabController = this.getService('tabController');
+
+    // TabController 이벤트 구독
+    tabController.on('document-activated', (_document) => {
+      this.displayDocument(_document);
     });
 
-    this.search_panel.on('find-next', () => {
-      this.#findNext();
-    });
-
-    this.search_panel.on('find-previous', () => {
-      this.#findPrevious();
-    });
-
-    this.search_panel.on('replace-one', (_replacement) => {
-      this.#replaceOne(_replacement);
-    });
-
-    this.search_panel.on('replace-all', (_query, _replacement, _options) => {
-      this.#replaceAll(_query, _replacement, _options);
-    });
-
-    this.search_panel.on('close-requested', () => {
-      this.editorPane.clearSearchHighlights();
-      this.current_search_results = [];
-      this.current_search_index = -1;
-    });
-  }
-
-  /**
-   * CompletionPanel 설정
-   */
-  setCompletionPanel(_completionPanel) {
-    this.completion_panel = _completionPanel;
-    console.log('[EditorController] CompletionPanel 설정됨');
-
-    this.completion_panel.on('item-selected', (_item) => {
-      console.log('[EditorController] 항목 선택됨:', _item.label);
-      this.editorPane.insertCompletion(_item);
-      this.completion_panel.hide();
-      this.editorPane.setCompletionPanelVisible(false);
-    });
-
-    this.completion_panel.on('close-requested', () => {
-      console.log('[EditorController] 패널 닫기 요청');
-      this.completion_panel.hide();
-      this.editorPane.setCompletionPanelVisible(false);
+    tabController.on('document-closed', (_document) => {
+      if (this.current_document === _document) {
+        this.current_document = null;
+        if (this.editor_pane) {
+          this.editor_pane.clear();
+        }
+      }
     });
   }
 
   /**
    * EditorPane 설정
+   * @param {EditorPane} _editorPane - 에디터 뷰
    */
   setEditorPane(_editorPane) {
-    this.editorPane = _editorPane;
-    console.log('[EditorController] EditorPane 설정됨');
+    ValidationUtils.assertNonNull(_editorPane, 'EditorPane');
 
-    // 내용 변경
-    this.editorPane.on('content-changed', ({ document }) => {
-      this.emit('content-changed', document);
+    this.editor_pane = _editorPane;
+    this.registerView('editorPane', _editorPane);
+
+    // EditorPane 이벤트 연결
+    this.editor_pane.on('content-changed', ({ document: _document }) => {
+      this.emit('content-changed', _document);
     });
 
-    // 저장 요청
-    this.editorPane.on('save-requested', (_document) => {
+    this.editor_pane.on('save-requested', (_document) => {
       this.saveDocument(_document);
     });
 
-    // 자동완성 트리거
-    this.editorPane.on('trigger-completion', (_data) => {
-      console.log('[EditorController] trigger-completion 이벤트 수신:', _data);
-      this.#handleCompletionTrigger(_data);
-    });
-
-    // 자동완성 네비게이션
-    this.editorPane.on('completion-next', () => {
-      console.log('[EditorController] completion-next');
-      if (this.completion_panel) {
-        this.completion_panel.selectNext();
-      }
-    });
-
-    this.editorPane.on('completion-previous', () => {
-      console.log('[EditorController] completion-previous');
-      if (this.completion_panel) {
-        this.completion_panel.selectPrevious();
-      }
-    });
-
-    this.editorPane.on('completion-confirm', () => {
-      console.log('[EditorController] completion-confirm');
-      if (this.completion_panel) {
-        this.completion_panel.handleEnter();
-      }
-    });
-
-    this.editorPane.on('completion-cancel', () => {
-      console.log('[EditorController] completion-cancel');
-      if (this.completion_panel) {
-        this.completion_panel.handleEscape();
-      }
+    this.editor_pane.on('cursor-moved', (_data) => {
+      this.emit('cursor-moved', _data);
     });
   }
 
   /**
-   * 자동완성 트리거 처리
+   * Document를 EditorPane에 표시
+   * @param {Document} _document - 표시할 Document
    */
-  #handleCompletionTrigger(_data) {
-    if (!this.current_document || !this.completion_panel) return;
-
-    const { line, column, prefix, contextType, objectName } = _data;
-    const language = this.#detectLanguage();
-
-    const items = this.completionService.getCompletions(this.current_document, line, column, language, contextType, objectName);
-
-    if (items.length === 0) {
-      this.completion_panel.hide();
-      this.editorPane.setCompletionPanelVisible(false);
-      return;
-    }
-
-    const coords = this.editorPane.getCursorCoordinates();
-
-    this.completion_panel.show(items, coords);
-    this.editorPane.setCompletionPanelVisible(true);
-  }
-
-  /**
-   * 수동 자동완성 트리거 (Ctrl+Space)
-   */
-  triggerCompletion() {
-    if (!this.editorPane || !this.current_document) return;
-
-    const cursorPos = this.editorPane.getCursorPosition();
-    if (!cursorPos) return;
-
-    const currentLine = this.current_document.getLine(cursorPos.line);
-    if (!currentLine) return;
-
-    const beforeCursor = currentLine.substring(0, cursorPos.column);
-
-    // 'this.' 패턴
-    const thisMatch = beforeCursor.match(/\bthis\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
-
-    // 'obj.' 패턴
-    const objMatch = beforeCursor.match(/\b([a-z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
-
-    // 일반 식별자
-    const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
-
-    let prefix = '';
-    let contextType = 'global';
-    let objectName = null;
-
-    if (thisMatch) {
-      prefix = thisMatch[1];
-      contextType = 'this';
-    } else if (objMatch) {
-      objectName = objMatch[1];
-      prefix = objMatch[2];
-      contextType = 'object';
-    } else if (prefixMatch) {
-      prefix = prefixMatch[0];
-    }
-
-    this.#handleCompletionTrigger({
-      line: cursorPos.line,
-      column: cursorPos.column,
-      prefix: prefix,
-      contextType: contextType,
-      objectName: objectName,
-    });
-  }
-
-  /**
-   * 언어 감지
-   */
-  #detectLanguage() {
-    if (!this.current_document || !this.current_document.file_node) {
-      return 'plaintext';
-    }
-
-    const ext = this.current_document.file_node.getExtension();
-    const langMap = {
-      '.js': 'javascript',
-      '.html': 'html',
-      '.css': 'css',
-      '.md': 'markdown',
-    };
-
-    return langMap[ext] || 'plaintext';
-  }
-
-  // 검색 관련 메서드들 (동일)
-  showSearch() {
-    if (!this.search_panel) return;
-    this.search_panel.show();
-    this.search_panel.setMode('search');
-    this.search_panel.focus();
-  }
-
-  showReplace() {
-    if (!this.search_panel) return;
-    this.search_panel.show();
-    this.search_panel.setMode('replace');
-    this.search_panel.focus();
-  }
-
-  #performSearch(_query, _options) {
-    if (!this.current_document || !_query) {
-      this.current_search_results = [];
-      this.current_search_index = -1;
-      this.editorPane.clearSearchHighlights();
-      this.search_panel.updateResults([], -1);
-      return;
-    }
-
-    if (_options.regex) {
-      const validation = this.searchService.validateRegex(_query);
-      if (!validation.valid) {
-        console.error('잘못된 정규식:', validation.error);
-        this.current_search_results = [];
-        this.current_search_index = -1;
-        this.editorPane.clearSearchHighlights();
-        this.search_panel.updateResults([], -1);
-        return;
-      }
-    }
-
-    const text = this.current_document.getText();
-    this.current_search_results = this.searchService.search(text, _query, _options);
-
-    if (this.current_search_results.length > 0) {
-      this.current_search_index = 0;
-    } else {
-      this.current_search_index = -1;
-    }
-
-    this.editorPane.highlightSearchResults(this.current_search_results, this.current_search_index);
-    this.search_panel.updateResults(this.current_search_results, this.current_search_index);
-  }
-
-  #findNext() {
-    if (this.current_search_results.length === 0) return;
-    this.current_search_index = (this.current_search_index + 1) % this.current_search_results.length;
-    this.editorPane.highlightSearchResults(this.current_search_results, this.current_search_index);
-    this.search_panel.updateResults(this.current_search_results, this.current_search_index);
-  }
-
-  #findPrevious() {
-    if (this.current_search_results.length === 0) return;
-    this.current_search_index = (this.current_search_index - 1 + this.current_search_results.length) % this.current_search_results.length;
-    this.editorPane.highlightSearchResults(this.current_search_results, this.current_search_index);
-    this.search_panel.updateResults(this.current_search_results, this.current_search_index);
-  }
-
-  #replaceOne(_replacement) {
-    if (!this.current_document || this.current_search_results.length === 0) return;
-    if (this.current_search_index < 0) return;
-
-    const result = this.current_search_results[this.current_search_index];
-    const oldText = this.current_document.getText();
-    const newText = this.searchService.replaceOne(oldText, result, _replacement);
-
-    this.current_document.content = newText;
-    this.current_document.lines = newText.split('\n');
-    this.current_document.is_dirty = true;
-
-    const lastSearch = this.searchService.getLastSearch();
-    if (lastSearch) {
-      this.#performSearch(lastSearch.query, lastSearch.options);
-    }
-  }
-
-  #replaceAll(_query, _replacement, _options) {
-    if (!this.current_document || !_query) return;
-
-    const oldText = this.current_document.getText();
-    const result = this.searchService.replace(oldText, _query, _replacement, _options);
-
-    if (result.count === 0) {
-      alert('바꿀 항목이 없습니다.');
-      return;
-    }
-
-    this.current_document.content = result.newText;
-    this.current_document.lines = result.newText.split('\n');
-    this.current_document.is_dirty = true;
-
-    this.current_search_results = [];
-    this.current_search_index = -1;
-    this.editorPane.clearSearchHighlights();
-    this.search_panel.updateResults([], -1);
-
-    this.emit('status-message', `${result.count}개 항목을 바꿨습니다.`);
-  }
-
-  // Document 관련
   displayDocument(_document) {
-    this.current_document = _document;
+    try {
+      ValidationUtils.assertNonNull(_document, 'Document');
 
-    if (this.editorPane) {
-      this.editorPane.setDocument(_document);
+      this.current_document = _document;
+
+      if (this.editor_pane) {
+        this.editor_pane.setDocument(_document);
+      }
+
+      this.emit('document-displayed', _document);
+    } catch (error) {
+      this.handleError(error, 'displayDocument');
+      this.emit('error', {
+        message: 'Document 표시 실패',
+        error,
+      });
     }
-
-    this.current_search_results = [];
-    this.current_search_index = -1;
-
-    this.emit('document-displayed', _document);
   }
 
+  /**
+   * Document를 파일에 저장
+   * @param {Document} _document - 저장할 Document
+   */
   async saveDocument(_document) {
-    if (!_document) return;
-
     try {
+      ValidationUtils.assertNonNull(_document, 'Document');
+
+      const fileSystemService = this.getService('fileSystemService');
       const content = _document.getText();
-      await this.fileSystemService.writeFile(_document.file_node, content);
+
+      await fileSystemService.writeFile(_document.file_node, content);
 
       _document.markAsSaved();
 
       this.emit('document-saved', _document);
       this.emit('status-message', `${_document.file_node.name} 저장됨`);
     } catch (error) {
-      console.error('저장 실패:', error);
+      this.handleError(error, 'saveDocument');
       this.emit('error', {
-        message: `저장 실패: ${_document.file_node.name}`,
+        message: `저장 실패: ${_document?.file_node?.name || '알 수 없는 파일'}`,
         error,
       });
     }
   }
 
+  /**
+   * 모든 수정된 Document 저장
+   */
   async saveAllDocuments() {
-    const documents = this.tabController.getAllDocuments();
-    const dirtyDocs = documents.filter((_doc) => _doc.isDirty());
+    try {
+      const tabController = this.getService('tabController');
+      const documents = Array.from(tabController.documents.values());
+      const dirtyDocuments = documents.filter((_doc) => _doc.isDirty());
 
-    for (const doc of dirtyDocs) {
-      await this.saveDocument(doc);
+      if (dirtyDocuments.length === 0) {
+        this.emit('status-message', '저장할 파일이 없습니다');
+        return;
+      }
+
+      const promises = dirtyDocuments.map((_doc) => this.saveDocument(_doc));
+      await Promise.all(promises);
+
+      this.emit('status-message', `${dirtyDocuments.length}개 파일 저장됨`);
+    } catch (error) {
+      this.handleError(error, 'saveAllDocuments');
+      this.emit('error', {
+        message: '일괄 저장 실패',
+        error,
+      });
     }
   }
 
+  /**
+   * 현재 활성 Document 반환
+   * @returns {Document|null}
+   */
   getCurrentDocument() {
     return this.current_document;
   }
 
-  focus() {
-    if (this.editorPane) {
-      this.editorPane.focus();
+  /**
+   * EditorPane 반환
+   * @returns {EditorPane|null}
+   */
+  getEditorPane() {
+    return this.editor_pane;
+  }
+
+  /**
+   * 컨트롤러 종료
+   */
+  destroy() {
+    if (this.editor_pane) {
+      this.editor_pane.destroy();
+      this.editor_pane = null;
     }
+
+    this.current_document = null;
+
+    super.destroy();
   }
 }
