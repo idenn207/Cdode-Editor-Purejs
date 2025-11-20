@@ -1,94 +1,103 @@
 /**
  * 파일: src/views/components/SearchPanel.js
- * 기능: 검색/바꾸기 UI
- * 책임: 사용자 검색 인터페이스 제공
+ * 기능: 검색/바꾸기 패널 UI
+ * 책임: 검색 입력, 옵션 설정, 결과 표시
+ *
+ * 리팩토링 변경사항:
+ * 1. BaseComponent 상속 적용
+ * 2. 생명주기 메서드 구현
+ * 3. 검증 로직 추가
+ * 4. 상태 관리 개선
  */
 
-import EventEmitter from '../../utils/EventEmitter.js';
+import BaseComponent from '../../core/BaseComponent.js';
+import DOMUtils from '../../utils/DOMUtils.js';
+import ValidationUtils from '../../utils/ValidationUtils.js';
 
-export default class SearchPanel extends EventEmitter {
+export default class SearchPanel extends BaseComponent {
   constructor(_containerId) {
-    super();
-    this.container = window.document.getElementById(_containerId);
+    super(_containerId);
+
+    // 상태
     this.mode = 'search'; // 'search' | 'replace'
     this.is_visible = false;
 
+    // DOM 참조
+    this.panel_el = null;
     this.search_input = null;
     this.replace_input = null;
     this.case_sensitive_checkbox = null;
     this.whole_word_checkbox = null;
     this.regex_checkbox = null;
     this.results_info = null;
-
-    this.current_results = [];
-    this.current_index = -1;
-
-    this.#initialize();
+    this.replace_row = null;
   }
 
-  #initialize() {
-    const panel = window.document.createElement('div');
-    panel.className = 'search-panel';
-    panel.style.display = 'none';
-
-    panel.innerHTML = `
-      <div class="search-row">
-        <input type="text" class="search-input" placeholder="찾기..." />
-        <button class="search-button" id="PrevButton" title="이전 (Shift+Enter)">◀</button>
-        <button class="search-button" id="NextButton" title="다음 (Enter)">▶</button>
-        <button class="search-button" id="CloseButton" title="닫기 (Escape)">✕</button>
-      </div>
-      <div class="replace-row" style="display: none;">
-        <input type="text" class="replace-input" placeholder="바꾸기..." />
-        <button class="search-button" id="ReplaceOneButton">바꾸기</button>
-        <button class="search-button" id="ReplaceAllButton">전체 바꾸기</button>
-      </div>
-      <div class="options-row">
-        <label>
-          <input type="checkbox" id="CaseSensitiveCheckbox" />
-          <span>Aa</span>
-          <span class="option-tooltip">대소문자 구분</span>
-        </label>
-        <label>
-          <input type="checkbox" id="WholeWordCheckbox" />
-          <span>Ab</span>
-          <span class="option-tooltip">단어 단위</span>
-        </label>
-        <label>
-          <input type="checkbox" id="RegexCheckbox" />
-          <span>.*</span>
-          <span class="option-tooltip">정규식</span>
-        </label>
-      </div>
-      <div class="results-info"></div>
-    `;
-
-    this.container.appendChild(panel);
-    this.panel = panel;
-
-    this.#cacheElements();
+  /**
+   * 초기화 (BaseComponent.initialize 구현)
+   */
+  initialize() {
+    this.#createDOM();
     this.#attachEvents();
   }
 
-  #cacheElements() {
-    this.search_input = this.panel.querySelector('.search-input');
-    this.replace_input = this.panel.querySelector('.replace-input');
-    this.replace_row = this.panel.querySelector('.replace-row');
-    this.results_info = this.panel.querySelector('.results-info');
+  /**
+   * DOM 구조 생성 (private)
+   */
+  #createDOM() {
+    this.panel_el = DOMUtils.createElement('div', {
+      className: 'search-panel',
+      styles: {
+        display: 'none',
+      },
+    });
 
-    this.case_sensitive_checkbox = this.panel.querySelector('#CaseSensitiveCheckbox');
-    this.whole_word_checkbox = this.panel.querySelector('#WholeWordCheckbox');
-    this.regex_checkbox = this.panel.querySelector('#RegexCheckbox');
+    this.panel_el.innerHTML = `
+      <div class="search-row">
+        <input type="text" class="search-input" placeholder="Search" />
+        <button class="icon-button prev-button" title="Previous">▲</button>
+        <button class="icon-button next-button" title="Next">▼</button>
+        <button class="icon-button close-button" title="Close">×</button>
+      </div>
+      <div class="replace-row" style="display: none;">
+        <input type="text" class="replace-input" placeholder="Replace" />
+        <button class="btn replace-one-button">Replace</button>
+        <button class="btn replace-all-button">Replace All</button>
+      </div>
+      <div class="options-row">
+        <label>
+          <input type="checkbox" class="case-sensitive-checkbox" />
+          Aa Match Case
+        </label>
+        <label>
+          <input type="checkbox" class="whole-word-checkbox" />
+          W Whole Word
+        </label>
+        <label>
+          <input type="checkbox" class="regex-checkbox" />
+          .* Regex
+        </label>
+        <div class="results-info"></div>
+      </div>
+    `;
 
-    this.prev_button = this.panel.querySelector('#PrevButton');
-    this.next_button = this.panel.querySelector('#NextButton');
-    this.close_button = this.panel.querySelector('#CloseButton');
-    this.replace_one_button = this.panel.querySelector('#ReplaceOneButton');
-    this.replace_all_button = this.panel.querySelector('#ReplaceAllButton');
+    this.container.appendChild(this.panel_el);
+
+    // 요소 참조 저장
+    this.search_input = this.panel_el.querySelector('.search-input');
+    this.replace_input = this.panel_el.querySelector('.replace-input');
+    this.case_sensitive_checkbox = this.panel_el.querySelector('.case-sensitive-checkbox');
+    this.whole_word_checkbox = this.panel_el.querySelector('.whole-word-checkbox');
+    this.regex_checkbox = this.panel_el.querySelector('.regex-checkbox');
+    this.results_info = this.panel_el.querySelector('.results-info');
+    this.replace_row = this.panel_el.querySelector('.replace-row');
   }
 
+  /**
+   * 이벤트 연결 (private)
+   */
   #attachEvents() {
-    // 검색어 입력
+    // 검색 입력
     this.search_input.addEventListener('input', () => {
       this.#onSearchChanged();
     });
@@ -120,50 +129,82 @@ export default class SearchPanel extends EventEmitter {
     });
 
     // 버튼
-    this.prev_button.addEventListener('click', () => {
+    const prevButton = this.panel_el.querySelector('.prev-button');
+    const nextButton = this.panel_el.querySelector('.next-button');
+    const closeButton = this.panel_el.querySelector('.close-button');
+    const replaceOneButton = this.panel_el.querySelector('.replace-one-button');
+    const replaceAllButton = this.panel_el.querySelector('.replace-all-button');
+
+    prevButton.addEventListener('click', () => {
       this.#findPrevious();
     });
 
-    this.next_button.addEventListener('click', () => {
+    nextButton.addEventListener('click', () => {
       this.#findNext();
     });
 
-    this.close_button.addEventListener('click', () => {
+    closeButton.addEventListener('click', () => {
       this.hide();
     });
 
-    this.replace_one_button.addEventListener('click', () => {
+    replaceOneButton.addEventListener('click', () => {
       this.#replaceOne();
     });
 
-    this.replace_all_button.addEventListener('click', () => {
+    replaceAllButton.addEventListener('click', () => {
       this.#replaceAll();
     });
+  }
+
+  /**
+   * 렌더링 (BaseComponent.render 구현)
+   */
+  render() {
+    // SearchPanel은 상태 변경 시 개별 업데이트
+    // 전체 재렌더링 불필요
   }
 
   /**
    * 패널 표시
    */
   show() {
-    this.panel.style.display = 'block';
+    if (this.is_visible) return;
+
+    this.panel_el.style.display = 'block';
     this.is_visible = true;
+
     this.search_input.focus();
     this.search_input.select();
+
+    this.emit('shown');
   }
 
   /**
    * 패널 숨김
    */
   hide() {
-    this.panel.style.display = 'none';
+    if (!this.is_visible) return;
+
+    this.panel_el.style.display = 'none';
     this.is_visible = false;
+
     this.emit('close-requested');
+    this.emit('hidden');
+  }
+
+  /**
+   * 표시 여부
+   */
+  isVisible() {
+    return this.is_visible;
   }
 
   /**
    * 모드 설정
    */
   setMode(_mode) {
+    ValidationUtils.assertContains(['search', 'replace'], _mode, 'Mode');
+
     this.mode = _mode;
 
     if (_mode === 'replace') {
@@ -171,22 +212,21 @@ export default class SearchPanel extends EventEmitter {
     } else {
       this.replace_row.style.display = 'none';
     }
+
+    this.emit('mode-changed', { mode: _mode });
   }
 
   /**
-   * 검색어 변경
+   * 모드 가져오기
    */
-  #onSearchChanged() {
-    const query = this.search_input.value;
-    const options = this.#getOptions();
-
-    this.emit('search-changed', query, options);
+  getMode() {
+    return this.mode;
   }
 
   /**
-   * 옵션 반환
+   * 검색 옵션 가져오기
    */
-  #getOptions() {
+  getOptions() {
     return {
       caseSensitive: this.case_sensitive_checkbox.checked,
       wholeWord: this.whole_word_checkbox.checked,
@@ -195,60 +235,35 @@ export default class SearchPanel extends EventEmitter {
   }
 
   /**
-   * 다음 찾기
+   * 검색어 가져오기
    */
-  #findNext() {
-    this.emit('find-next');
+  getQuery() {
+    return this.search_input.value;
   }
 
   /**
-   * 이전 찾기
+   * 바꿀 텍스트 가져오기
    */
-  #findPrevious() {
-    this.emit('find-previous');
+  getReplacement() {
+    return this.replace_input.value;
   }
 
   /**
-   * 하나 바꾸기
-   */
-  #replaceOne() {
-    const replacement = this.replace_input.value;
-    this.emit('replace-one', replacement);
-  }
-
-  /**
-   * 전체 바꾸기
-   */
-  #replaceAll() {
-    const query = this.search_input.value;
-    const replacement = this.replace_input.value;
-    const options = this.#getOptions();
-
-    const confirmed = confirm(`모든 "${query}"를 "${replacement}"(으)로 바꾸시겠습니까?`);
-    if (confirmed) {
-      this.emit('replace-all', query, replacement, options);
-    }
-  }
-
-  /**
-   * 검색 결과 업데이트
+   * 검색 결과 정보 업데이트
    */
   updateResults(_results, _currentIndex) {
-    this.current_results = _results;
-    this.current_index = _currentIndex;
+    ValidationUtils.assertArray(_results, 'Results');
 
     if (_results.length === 0) {
-      this.results_info.textContent = '결과 없음';
+      this.results_info.textContent = 'No results';
     } else {
-      this.results_info.textContent = `${_currentIndex + 1} / ${_results.length}`;
+      this.results_info.textContent = `${_currentIndex + 1} of ${_results.length}`;
     }
-  }
 
-  /**
-   * 검색어 설정
-   */
-  setSearchQuery(_query) {
-    this.search_input.value = _query;
+    this.emit('results-updated', {
+      total: _results.length,
+      current: _currentIndex,
+    });
   }
 
   /**
@@ -260,9 +275,125 @@ export default class SearchPanel extends EventEmitter {
   }
 
   /**
-   * 가시성 확인
+   * 검색어 변경 처리 (private)
    */
-  isVisible() {
-    return this.is_visible;
+  #onSearchChanged() {
+    const query = this.search_input.value;
+    const options = this.getOptions();
+
+    this.emit('search-changed', query, options);
+  }
+
+  /**
+   * 다음 찾기 (private)
+   */
+  #findNext() {
+    this.emit('find-next');
+  }
+
+  /**
+   * 이전 찾기 (private)
+   */
+  #findPrevious() {
+    this.emit('find-previous');
+  }
+
+  /**
+   * 하나 바꾸기 (private)
+   */
+  #replaceOne() {
+    const replacement = this.replace_input.value;
+    this.emit('replace-one', replacement);
+  }
+
+  /**
+   * 전체 바꾸기 (private)
+   */
+  #replaceAll() {
+    const query = this.search_input.value;
+    const replacement = this.replace_input.value;
+    const options = this.getOptions();
+
+    if (!query) {
+      alert('검색어를 입력하세요.');
+      return;
+    }
+
+    const confirmed = confirm(`"${query}"를 "${replacement}"로 모두 바꾸시겠습니까?`);
+    if (!confirmed) return;
+
+    this.emit('replace-all', query, replacement, options);
+  }
+
+  /**
+   * 검색어 설정
+   */
+  setQuery(_query) {
+    ValidationUtils.assertString(_query, 'Query');
+    this.search_input.value = _query;
+    this.#onSearchChanged();
+  }
+
+  /**
+   * 옵션 설정
+   */
+  setOptions(_options) {
+    ValidationUtils.assertObject(_options, 'Options');
+
+    if (_options.caseSensitive !== undefined) {
+      ValidationUtils.assertBoolean(_options.caseSensitive, 'caseSensitive');
+      this.case_sensitive_checkbox.checked = _options.caseSensitive;
+    }
+
+    if (_options.wholeWord !== undefined) {
+      ValidationUtils.assertBoolean(_options.wholeWord, 'wholeWord');
+      this.whole_word_checkbox.checked = _options.wholeWord;
+    }
+
+    if (_options.regex !== undefined) {
+      ValidationUtils.assertBoolean(_options.regex, 'regex');
+      this.regex_checkbox.checked = _options.regex;
+    }
+
+    this.#onSearchChanged();
+  }
+
+  /**
+   * 초기화
+   */
+  reset() {
+    this.search_input.value = '';
+    this.replace_input.value = '';
+    this.case_sensitive_checkbox.checked = false;
+    this.whole_word_checkbox.checked = false;
+    this.regex_checkbox.checked = false;
+    this.results_info.textContent = '';
+  }
+
+  /**
+   * 컴포넌트 파괴
+   */
+  destroy() {
+    this.mode = 'search';
+    this.is_visible = false;
+    this.panel_el = null;
+    this.search_input = null;
+    this.replace_input = null;
+
+    super.destroy();
+  }
+
+  /**
+   * 디버그 정보
+   */
+  getDebugInfo() {
+    return {
+      component: this.constructor.name,
+      is_mounted: this.is_mounted,
+      is_visible: this.is_visible,
+      mode: this.mode,
+      query: this.search_input?.value || '',
+      options: this.is_mounted ? this.getOptions() : null,
+    };
   }
 }
