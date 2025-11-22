@@ -12,6 +12,7 @@ export const COMPLETION_KIND_CLASS = 'class';
 export const COMPLETION_KIND_SNIPPET = 'snippet';
 export const COMPLETION_KIND_PROPERTY = 'property';
 export const COMPLETION_KIND_METHOD = 'method';
+export const COMPLETION_KIND_IMPORT = 'import';
 
 export default class CompletionService {
   constructor() {
@@ -41,21 +42,26 @@ export default class CompletionService {
     }
 
     // 일반 자동완성
-    if (!prefix || prefix.length < 1) {
-      return [];
-    }
+    /** @description 빈 prefix 도 자동완성 패널 활성화 */
+    // if (!prefix || prefix.length < 1) {
+    //   return [];
+    // }
 
     const completions = [];
 
-    // 1. 키워드
+    // 1. Import 항목
+    const imports = this.#getImportCompletions(_document, _language, prefix);
+    completions.push(...imports);
+
+    // 2. 키워드
     const keywords = this.#getKeywordCompletions(_language, prefix);
     completions.push(...keywords);
 
-    // 2. 사용자 정의 심볼
+    // 3. 사용자 정의 심볼
     const symbols = this.#getSymbolCompletions(_document, _language, prefix, _line);
     completions.push(...symbols);
 
-    // 3. 코드 스니펫
+    // 4. 코드 스니펫
     const snippets = this.#getSnippetCompletions(_language, prefix);
     completions.push(...snippets);
 
@@ -69,8 +75,6 @@ export default class CompletionService {
     if (_language !== LANGUAGE_JAVASCRIPT) return [];
 
     const text = _document.getText();
-    const lines = text.split('\n');
-    const scopeText = lines.slice(0, _currentLine + 1).join('\n');
 
     const members = [];
     const seen = new Set();
@@ -79,7 +83,7 @@ export default class CompletionService {
     const objLiteralPattern = new RegExp(`\\b${_objectName}\\s*=\\s*\\{([^}]+)\\}`, 'g');
 
     let match;
-    while ((match = objLiteralPattern.exec(scopeText)) !== null) {
+    while ((match = objLiteralPattern.exec(text)) !== null) {
       const objBody = match[1];
 
       // 프로퍼티 추출: prop: value
@@ -120,7 +124,7 @@ export default class CompletionService {
     // obj.prop = value 패턴
     const dotPropPattern = new RegExp(`\\b${_objectName}\\.([a-zA-Z_$][a-zA-Z0-9_$]*)`, 'g');
 
-    while ((match = dotPropPattern.exec(scopeText)) !== null) {
+    while ((match = dotPropPattern.exec(text)) !== null) {
       const name = match[1];
       if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
         members.push({
@@ -151,13 +155,15 @@ export default class CompletionService {
     const seen = new Set();
 
     // 현재 클래스 찾기
-    const classMatch = scopeText.match(/class\s+([A-Z][a-zA-Z0-9_]*)\s*{/);
+    const classMatch = scopeText.match(/\bclass\s+([a-zA-Z_$][\w$]*)\s*(?:extends\s+([a-zA-Z_$][\w$]*))?\s*\{/g);
     if (!classMatch) return [];
+    const nowClass = classMatch[classMatch.length - 1].split(' ')[1];
+    const classText = this.#extractClassDefinition(text, nowClass);
 
     // this.property = value
-    const propertyPattern = /\bthis\.([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=/g;
+    const propertyPattern = /\bthis\.([a-zA-Z_#$][a-zA-Z0-9_$]*)\s*=/g;
     let match;
-    while ((match = propertyPattern.exec(scopeText)) !== null) {
+    while ((match = propertyPattern.exec(classText)) !== null) {
       const name = match[1];
       if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
         members.push({
@@ -172,8 +178,8 @@ export default class CompletionService {
     }
 
     // 메서드 (class 내부)
-    const methodPattern = /^\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\([^)]*\)\s*\{/gm;
-    while ((match = methodPattern.exec(scopeText)) !== null) {
+    const methodPattern = /^\s*([a-zA-Z_#$][a-zA-Z0-9_$]*)\s*\([^)]*\)\s*\{/gm;
+    while ((match = methodPattern.exec(classText)) !== null) {
       const name = match[1];
       if (!this.#isKeyword(name) && !seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
         members.push({
@@ -211,8 +217,6 @@ export default class CompletionService {
    */
   #getSymbolCompletions(_document, _language, _prefix, _currentLine) {
     const text = _document.getText();
-    const lines = text.split('\n');
-    const scopeText = lines.slice(0, _currentLine + 1).join('\n');
 
     const symbols = [];
     const seen = new Set();
@@ -221,7 +225,7 @@ export default class CompletionService {
       // 1. 변수 (우선순위 1)
       const varPattern = /\b(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
       let match;
-      while ((match = varPattern.exec(scopeText)) !== null) {
+      while ((match = varPattern.exec(text)) !== null) {
         const name = match[1];
         if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
           const isExactMatch = name === _prefix;
@@ -236,7 +240,7 @@ export default class CompletionService {
 
       // 2. 함수 (우선순위 2)
       const funcPattern = /\bfunction\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g;
-      while ((match = funcPattern.exec(scopeText)) !== null) {
+      while ((match = funcPattern.exec(text)) !== null) {
         const name = match[1];
         if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
           const isExactMatch = name === _prefix;
@@ -252,7 +256,7 @@ export default class CompletionService {
 
       // 3. 클래스 (우선순위 3)
       const classPattern = /\bclass\s+([A-Z][a-zA-Z0-9_]*)/g;
-      while ((match = classPattern.exec(scopeText)) !== null) {
+      while ((match = classPattern.exec(text)) !== null) {
         const name = match[1];
         if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
           const isExactMatch = name === _prefix;
@@ -267,7 +271,7 @@ export default class CompletionService {
 
       // 4. 화살표 함수
       const arrowPattern = /\b(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=>/g;
-      while ((match = arrowPattern.exec(scopeText)) !== null) {
+      while ((match = arrowPattern.exec(text)) !== null) {
         const name = match[1];
         if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
           const isExactMatch = name === _prefix;
@@ -289,6 +293,52 @@ export default class CompletionService {
       detail: this.#getKindLabel(_sym.kind),
       sortText: _sym.sortText,
     }));
+  }
+
+  /**
+   * 클래스 블록 추출
+   */
+  #extractClassDefinition(text, className) {
+    const regex = new RegExp(`class\\s+${className}\\s*(?:extends\\s+[a-zA-Z_$][\\w$]*)?\\s*\\{`, 'g');
+
+    const match = regex.exec(text);
+    if (!match) return null;
+
+    let depth = 0;
+    let start = match.index;
+    let inString = false;
+    let stringChar = '';
+    let escaped = false;
+
+    for (let i = match.index; i < text.length; i++) {
+      const char = text[i];
+      const prevChar = i > 0 ? text[i - 1] : '';
+
+      // 문자열 처리
+      if ((char === '"' || char === "'" || char === '`') && !escaped) {
+        if (!inString) {
+          inString = true;
+          stringChar = char;
+        } else if (char === stringChar) {
+          inString = false;
+        }
+      }
+
+      escaped = char === '\\' && !escaped;
+
+      // 문자열 내부가 아닐 때만 중괄호 카운팅
+      if (!inString) {
+        if (char === '{') depth++;
+        if (char === '}') {
+          depth--;
+          if (depth === 0) {
+            return text.substring(start, i + 1);
+          }
+        }
+      }
+    }
+
+    return null;
   }
 
   /**
@@ -346,6 +396,126 @@ export default class CompletionService {
   }
 
   /**
+   * import 자동완성
+   */
+  #getImportCompletions(_document, _language, _prefix) {
+    if (_language !== LANGUAGE_JAVASCRIPT) return [];
+
+    const text = _document.getText();
+    const imports = [];
+    const seen = new Set();
+
+    // 1. Named imports: import { foo, bar } from 'module'
+    const namedImportPattern = /import\s+\{([^}]+)\}\s+from\s+['"][^'"]+['"]/g;
+    let match;
+    while ((match = namedImportPattern.exec(text)) !== null) {
+      const importList = match[1];
+      // 각 import 항목 파싱 (쉼표로 구분)
+      const items = importList.split(',').map((_item) => _item.trim());
+
+      items.forEach((_item) => {
+        // "as" 별칭 처리: import { foo as bar }
+        const asMatch = _item.match(/([a-zA-Z_$][a-zA-Z0-9_$]*)\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+        let name;
+
+        if (asMatch) {
+          name = asMatch[2]; // 별칭 사용
+        } else {
+          name = _item.match(/[a-zA-Z_$][a-zA-Z0-9_$]*/)?.[0];
+        }
+
+        if (name && !seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+          imports.push({
+            label: name,
+            kind: COMPLETION_KIND_IMPORT,
+            insertText: name,
+            detail: 'Import',
+            sortText: `0_${name}`, // 높은 우선순위
+          });
+          seen.add(name);
+        }
+      });
+    }
+
+    // 2. Default imports: import foo from 'module'
+    const defaultImportPattern = /import\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s+from\s+['"][^'"]+['"]/g;
+    while ((match = defaultImportPattern.exec(text)) !== null) {
+      const name = match[1];
+      if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+        imports.push({
+          label: name,
+          kind: COMPLETION_KIND_IMPORT,
+          insertText: name,
+          detail: 'Import (default)',
+          sortText: `0_${name}`,
+        });
+        seen.add(name);
+      }
+    }
+
+    // 3. Namespace imports: import * as foo from 'module'
+    const namespaceImportPattern = /import\s+\*\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s+from\s+['"][^'"]+['"]/g;
+    while ((match = namespaceImportPattern.exec(text)) !== null) {
+      const name = match[1];
+      if (!seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+        imports.push({
+          label: name,
+          kind: COMPLETION_KIND_IMPORT,
+          insertText: name,
+          detail: 'Import (namespace)',
+          sortText: `0_${name}`,
+        });
+        seen.add(name);
+      }
+    }
+
+    // 4. Mixed imports: import foo, { bar, baz } from 'module'
+    const mixedImportPattern = /import\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*,\s*\{([^}]+)\}\s+from\s+['"][^'"]+['"]/g;
+    while ((match = mixedImportPattern.exec(text)) !== null) {
+      // Default import
+      const defaultName = match[1];
+      if (!seen.has(defaultName) && defaultName.toLowerCase().startsWith(_prefix.toLowerCase())) {
+        imports.push({
+          label: defaultName,
+          kind: COMPLETION_KIND_IMPORT,
+          insertText: defaultName,
+          detail: 'Import (default)',
+          sortText: `0_${defaultName}`,
+        });
+        seen.add(defaultName);
+      }
+
+      // Named imports
+      const namedList = match[2];
+      const items = namedList.split(',').map((_item) => _item.trim());
+
+      items.forEach((_item) => {
+        const asMatch = _item.match(/([a-zA-Z_$][a-zA-Z0-9_$]*)\s+as\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/);
+        let name;
+
+        if (asMatch) {
+          name = asMatch[2];
+        } else {
+          name = _item.match(/[a-zA-Z_$][a-zA-Z0-9_$]*/)?.[0];
+        }
+
+        if (name && !seen.has(name) && name.toLowerCase().startsWith(_prefix.toLowerCase())) {
+          imports.push({
+            label: name,
+            kind: COMPLETION_KIND_IMPORT,
+            insertText: name,
+            detail: 'Import',
+            sortText: `0_${name}`,
+          });
+          seen.add(name);
+        }
+      });
+    }
+
+    return imports;
+  }
+
+  /**
    * 중복 제거
    */
   #deduplicateCompletions(_completions) {
@@ -371,6 +541,7 @@ export default class CompletionService {
       [COMPLETION_KIND_SNIPPET]: 'Snippet',
       [COMPLETION_KIND_PROPERTY]: 'Property',
       [COMPLETION_KIND_METHOD]: 'Method',
+      [COMPLETION_KIND_IMPORT]: 'Import',
     };
     return labels[_kind] || '';
   }

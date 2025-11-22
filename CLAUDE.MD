@@ -1,97 +1,239 @@
-# CodeEidtor Technical Document
+# CLAUDE.md
 
-현재 구현 내용은 project-decisions-\*.md 파일을 참고하기
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 기술 스택
+## Project Overview
 
-- html 5
-- css
-- purejs (not Node.js)
+A VSCode-like web-based code editor built with **pure JavaScript** (no Node.js, no build tools). The editor runs entirely in the browser using HTML5 APIs.
 
-## 프로젝트 구조
+**Tech Stack:**
 
-```plaintext
-index.html
-src/
-├──app.js
-├──controllers/
-├──services/
-└──views/
+- Pure JavaScript (ES6 modules)
+- HTML5 (no framework)
+- CSS (no preprocessor)
+- Browser File System Access API
+
+**Supported Languages:** JavaScript, HTML, CSS, Markdown
+
+## Running the Application
+
+Since this is a browser-based application with no build process:
+
+1. **Start a local server** (required due to CORS and ES module restrictions):
+
+   ```bash
+   # Python 3
+   python -m http.server 8000
+
+   # Python 2
+   python -m SimpleHTTPServer 8000
+
+   # Node.js (if available)
+   npx serve
+   ```
+
+2. **Open in browser**: Navigate to `http://localhost:8000/index.html`
+
+3. **Testing**: Manual testing only - no test framework configured
+
+## Architecture
+
+### Core Pattern: MVC + Observer
+
+The application follows an event-driven MVC architecture with the Observer pattern for component communication:
+
+```
+Application (src/app.js)
+    ↓
+┌─────────────┬─────────────┬─────────────┐
+│ Controllers │  Services   │    Views    │
+├─────────────┼─────────────┼─────────────┤
+│ - Editor    │ - FileSystem│ - Sidebar   │
+│ - File      │ - Completion│ - EditorPane│
+│ - Tab       │ - Language  │ - TabBar    │
+│             │ - Search    │ - Panels    │
+└─────────────┴─────────────┴─────────────┘
+         ↓           ↓            ↓
+    EventEmitter (Observer Pattern)
 ```
 
-## 패러다임
+### Component Communication
 
-- 객체(Class)형 프로그래밍
+All components extend `EventEmitter` (src/utils/EventEmitter.js) for loose coupling:
 
-## 주요 원칙
+- **Controllers** orchestrate business logic and coordinate between services and views
+- **Services** provide specialized functionality (file system, parsing, completion)
+- **Views** handle rendering and user interaction
+- **Models** represent data (Document, FileNode)
 
-1. 객체 지향 설계 원칙 (SOLID)
+Events are connected in `src/app.js#connectEvents()` - this is the **central wiring** of the application.
 
-- SRP (단일 책임 원칙): 클래스는 하나의 책임만 가져야 합니다.
-- OCP (개방-폐쇄 원칙): 클래스는 확장에는 열려 있고, 변경에는 닫혀 있어야 합니다.
-- LSP (리스코프 치환 원칙): 자식 클래스는 부모 클래스의 인스턴스처럼 동작해야 합니다.
-- ISP (인터페이스 분리 원칙): 클라이언트가 사용하지 않는 인터페이스에 의존하지 않아야 합니다.
-- DIP (의존 역전 원칙): 추상화에 의존하고 구체적인 구현에 의존하지 않아야 합니다.
+### Key Components
 
-1. UX/UI 디자인 원칙
+**Application Initialization** (`src/app.js`):
 
-- 명확성: 사용자 인터페이스가 명확하고 이해하기 쉬워야 합니다.
-- 일관성: 색 구성표, 글꼴, 버튼 스타일 등 디자인 요소가 일관성을 유지해야 합니다.
-- 시각적 계층: 중요한 요소가 눈에 잘 띄도록 시각적 계층을 구축합니다.
-- 피드백: 사용자에게 관련성 있는 피드백을 제공합니다.
-- 접근성: 모든 사용자가 웹사이트를 쉽게 이용할 수 있도록 접근성을 고려해야 합니다.
+- Entry point that wires all components together
+- Initializes services → controllers → views in order
+- Connects event listeners between components
+- Sets up keyboard shortcuts via KeyBindingManager
 
-## 디자인 패턴
+**EditorController** (`src/controllers/EditorController.js`):
 
-- Observer Pattern
-- Command Pattern
-- Strategy Pattern
-- Decorator Pattern
-- Virtual DOM Pattern
+- Central orchestrator for editor functionality
+- Manages current document state and editor pane
+- Coordinates search, auto-completion, and save operations
+- Bridge between TabController and EditorPane
 
-## 코드 패턴
+**Document Model** (`src/models/Document.js`):
 
-- Rope Data Structure
-- Debounce/Throttle
+- Stores file content as array of lines (`lines` array)
+- Tracks cursor position, selection, and dirty state
+- **Critical**: Does NOT use Rope data structure despite comments elsewhere - uses simple line array
+- Notifies listeners on changes via `_notifyChange()`
 
-## 코드 스타일
+**VirtualScroller** (`src/views/renderers/VirtualScroller.js`):
 
-- 파일 최상단 파일경로, 기능, 책임 주석작성
-- import/export 패턴 사용
-- export default 구분만 사용
-- 객체에서 요소 조회시 `fooObject.foo;` 패턴 사용
-- enum 요소는 `const FRUIT = 'apple' | 'banana` 패턴으로 관리
-- 초기화 패턴은 배열방식이 아닌 객체방식으로 관리
+- Performance optimization for large files
+- Only renders visible lines + buffer
+- Uses throttled scroll events (16ms = ~60fps)
+
+**SyntaxRenderer** (`src/views/renderers/SyntaxRenderer.js`):
+
+- Token-based syntax highlighting
+- Language-specific rendering via TokenParser
+
+**CompletionService** (`src/services/CompletionService.js`):
+
+- Context-aware auto-completion
+- Supports `this.`, `object.`, and general completions
+- Parses document to extract symbols (functions, classes, variables)
+- Language-specific keyword and snippet completion
+
+## Project Structure
+
+```
+index.html                 # Entry point
+src/
+├── app.js                 # Application initialization and wiring
+├── controllers/           # Business logic orchestration
+│   ├── EditorController.js   # Editor operations coordinator
+│   ├── FileController.js     # File operations
+│   └── TabController.js      # Tab/document management
+├── services/              # Specialized functionality
+│   ├── FileSystemService.js  # Browser File System API wrapper
+│   ├── CompletionService.js  # Auto-completion logic
+│   ├── LanguageService.js    # Language detection
+│   └── SearchService.js      # Find/replace functionality
+├── views/                 # UI components
+│   ├── components/           # Interactive UI elements
+│   │   ├── EditorPane.js        # Main editor area
+│   │   ├── Sidebar.js           # File tree
+│   │   ├── TabBar.js            # Tab management UI
+│   │   ├── SearchPanel.js       # Find/replace panel
+│   │   └── CompletionPanel.js   # Auto-complete dropdown
+│   └── renderers/            # Rendering engines
+│       ├── VirtualScroller.js   # Virtual scrolling
+│       └── SyntaxRenderer.js    # Syntax highlighting
+├── models/                # Data structures
+│   ├── Document.js           # File content & cursor state
+│   └── FileNode.js           # File tree node
+├── utils/                 # Shared utilities
+│   ├── EventEmitter.js       # Observer pattern implementation
+│   ├── KeyBindingManager.js  # Keyboard shortcuts
+│   ├── TokenParser.js        # Lexical analysis for syntax
+│   └── Debounce.js          # Performance utilities
+├── constants/             # Static data
+│   ├── Languages.js          # Language definitions
+│   └── Themes.js             # Color themes
+└── styles/                # CSS files (loaded dynamically)
+```
+
+## Code Conventions
+
+**CRITICAL - Follow these strictly:**
+
+### Naming Conventions
+
+- Variables/Functions: `camelCase`
+- Classes: `PascalCase`
+- Class Fields: `snake_case`
+- Private Fields: `_snake_case` (prefix with underscore)
+- Private Methods: `#camelCase` (JavaScript private)
+- Parameters: `_camelCase` (prefix with underscore)
+- Constants: `SCREAMING_SNAKE_CASE`
+- HTML id: `PascalCase`
+- HTML class: `kebab-case`
+
+### Code Style
+
+- **File headers**: Every file must have a comment with path, purpose, and responsibility
+- **Imports**: Use ES6 `import/export` pattern
+- **Exports**: Use `export default` for main class/function
+- **Object access**: Use dot notation `object.property` not bracket notation
+- **Enums**: Use string union pattern `const TYPE = 'foo' | 'bar'`
+- **Initialization**: Use object pattern, not array pattern:
 
   ```javascript
-  // 예시)
-
-  // 잘못된 패턴
-  const systems = [];
-
-  systems.push(new FooSystem());
-  systems.push(new BarSystem());
-
-  // 옳은 패턴
-  const systems = {
-    foo: null,
-    bar: null,
-  };
+  // CORRECT
+  const systems = { foo: null, bar: null };
   systems.foo = new FooSystem();
-  systems.bar = new BarSystem();
+
+  // WRONG
+  const systems = [];
+  systems.push(new FooSystem());
   ```
 
-## Convention
+### Design Patterns Used
 
-- Variable: camelCase
-- Function: camelCase
-- Class(js): PascalCase
-- Field: snake_case
-- Private Field: '\_' + snake_case
-- Method: camelCase
-- Private Method: '#' + camelCase
-- Parameter: '\_' + camelCase
-- Constant Variable: SCREAMING_SNAKE_CASE
-- id: PascalCase
-- name: camelCase
-- class(html): kebab-case
+- **Observer Pattern**: EventEmitter for component communication
+- **Command Pattern**: KeyBindingManager for keyboard shortcuts
+- **Strategy Pattern**: Different renderers for different languages
+- **Virtual DOM Pattern**: VirtualScroller for performance
+
+## Common Tasks
+
+### Adding a New Language
+
+1. Add language constant in `src/constants/Languages.js`
+2. Add token patterns in `src/utils/TokenParser.js#getTokenPatterns()`
+3. Add keywords in `src/services/CompletionService.js#initializeKeywords()`
+4. Add file extension mapping in `src/services/LanguageService.js#detectLanguage()`
+
+### Adding a New Keyboard Shortcut
+
+Add to `src/app.js#setupKeyBindings()`:
+
+```javascript
+this.keyBindings.register('ctrl+key', () => {
+  // action
+});
+```
+
+### Debugging Event Flow
+
+1. Check `src/app.js#connectEvents()` for event wiring
+2. Add console.log in EventEmitter.emit() to trace all events
+3. Events follow pattern: `component.emit('event-name', data)` → `other.on('event-name', handler)`
+
+### Working with Documents
+
+- Documents are managed by TabController (`src/controllers/TabController.js`)
+- Content is stored as line array in Document model (`document.lines`)
+- Changes trigger `content-changed` event to EditorController
+- Dirty state (`is_dirty`) tracks unsaved changes
+
+## Important Notes
+
+- **No build process**: Changes are immediately visible on browser refresh
+- **CORS restrictions**: Must run from local server, not `file://`
+- **Browser compatibility**: Requires File System Access API (Chromium-based browsers)
+- **Performance**: VirtualScroller handles files up to ~10k lines efficiently
+- **State management**: No global state - all state in controllers/models
+- **CSS loading**: Styles loaded dynamically in `app.js#loadStyles()`
+
+## Reference Documentation
+
+Detailed implementation decisions and design rationale are in:
+
+- `project-decisions-1.md` through `project-decisions-5.md`
+- `project-decisions-5-bug-fix-1.md` (recent completion feature fixes)

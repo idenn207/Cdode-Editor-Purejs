@@ -92,9 +92,7 @@ class Application {
     });
 
     // ===== TabController 이벤트 =====
-    this.controllers.tab.on('document-opened', (_document) => {
-      console.log('Document 열림:', _document.file_node.name);
-    });
+    this.controllers.tab.on('document-opened', (_document) => {});
 
     this.controllers.tab.on('document-activated', (_document) => {
       this.controllers.editor.displayDocument(_document);

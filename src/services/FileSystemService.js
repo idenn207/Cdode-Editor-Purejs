@@ -63,7 +63,7 @@ export default class FileSystemService {
   }
 
   #isSupportedFile(_filename) {
-    const SUPPORTED_EXTENSIONS = ['.js', '.html', '.css', '.md'];
+    const SUPPORTED_EXTENSIONS = ['.js', '.html', '.css', '.md', '.txt'];
     return SUPPORTED_EXTENSIONS.some((_ext) => _filename.endsWith(_ext));
   }
 

@@ -64,17 +64,14 @@ export default class EditorController extends EventEmitter {
    */
   setCompletionPanel(_completionPanel) {
     this.completion_panel = _completionPanel;
-    console.log('[EditorController] CompletionPanel 설정됨');
 
     this.completion_panel.on('item-selected', (_item) => {
-      console.log('[EditorController] 항목 선택됨:', _item.label);
       this.editorPane.insertCompletion(_item);
       this.completion_panel.hide();
       this.editorPane.setCompletionPanelVisible(false);
     });
 
     this.completion_panel.on('close-requested', () => {
-      console.log('[EditorController] 패널 닫기 요청');
       this.completion_panel.hide();
       this.editorPane.setCompletionPanelVisible(false);
     });
@@ -85,11 +82,10 @@ export default class EditorController extends EventEmitter {
    */
   setEditorPane(_editorPane) {
     this.editorPane = _editorPane;
-    console.log('[EditorController] EditorPane 설정됨');
 
     // 내용 변경
-    this.editorPane.on('content-changed', ({ document }) => {
-      this.emit('content-changed', document);
+    this.editorPane.on('content-changed', ({ _document, _text }) => {
+      this.emit('content-changed', { _document, _text });
     });
 
     // 저장 요청
@@ -99,34 +95,29 @@ export default class EditorController extends EventEmitter {
 
     // 자동완성 트리거
     this.editorPane.on('trigger-completion', (_data) => {
-      console.log('[EditorController] trigger-completion 이벤트 수신:', _data);
-      this.#handleCompletionTrigger(_data);
+      this.#handleCompletionTriggerOpen(_data);
     });
 
     // 자동완성 네비게이션
     this.editorPane.on('completion-next', () => {
-      console.log('[EditorController] completion-next');
       if (this.completion_panel) {
         this.completion_panel.selectNext();
       }
     });
 
     this.editorPane.on('completion-previous', () => {
-      console.log('[EditorController] completion-previous');
       if (this.completion_panel) {
         this.completion_panel.selectPrevious();
       }
     });
 
     this.editorPane.on('completion-confirm', () => {
-      console.log('[EditorController] completion-confirm');
       if (this.completion_panel) {
         this.completion_panel.handleEnter();
       }
     });
 
     this.editorPane.on('completion-cancel', () => {
-      console.log('[EditorController] completion-cancel');
       if (this.completion_panel) {
         this.completion_panel.handleEscape();
       }
@@ -136,7 +127,7 @@ export default class EditorController extends EventEmitter {
   /**
    * 자동완성 트리거 처리
    */
-  #handleCompletionTrigger(_data) {
+  #handleCompletionTriggerOpen(_data) {
     if (!this.current_document || !this.completion_panel) return;
 
     const { line, column, prefix, contextType, objectName } = _data;
@@ -144,11 +135,7 @@ export default class EditorController extends EventEmitter {
 
     const items = this.completionService.getCompletions(this.current_document, line, column, language, contextType, objectName);
 
-    if (items.length === 0) {
-      this.completion_panel.hide();
-      this.editorPane.setCompletionPanelVisible(false);
-      return;
-    }
+    if (items.length === 0) this.#handleCompletionTriggerClose();
 
     const coords = this.editorPane.getCursorCoordinates();
 
@@ -156,51 +143,18 @@ export default class EditorController extends EventEmitter {
     this.editorPane.setCompletionPanelVisible(true);
   }
 
+  #handleCompletionTriggerClose() {
+    this.completion_panel.hide();
+    this.editorPane.setCompletionPanelVisible(false);
+    return;
+  }
+
   /**
    * 수동 자동완성 트리거 (Ctrl+Space)
    */
   triggerCompletion() {
     if (!this.editorPane || !this.current_document) return;
-
-    const cursorPos = this.editorPane.getCursorPosition();
-    if (!cursorPos) return;
-
-    const currentLine = this.current_document.getLine(cursorPos.line);
-    if (!currentLine) return;
-
-    const beforeCursor = currentLine.substring(0, cursorPos.column);
-
-    // 'this.' 패턴
-    const thisMatch = beforeCursor.match(/\bthis\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
-
-    // 'obj.' 패턴
-    const objMatch = beforeCursor.match(/\b([a-z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
-
-    // 일반 식별자
-    const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
-
-    let prefix = '';
-    let contextType = 'global';
-    let objectName = null;
-
-    if (thisMatch) {
-      prefix = thisMatch[1];
-      contextType = 'this';
-    } else if (objMatch) {
-      objectName = objMatch[1];
-      prefix = objMatch[2];
-      contextType = 'object';
-    } else if (prefixMatch) {
-      prefix = prefixMatch[0];
-    }
-
-    this.#handleCompletionTrigger({
-      line: cursorPos.line,
-      column: cursorPos.column,
-      prefix: prefix,
-      contextType: contextType,
-      objectName: objectName,
-    });
+    this.editorPane.checkCompletionTrigger();
   }
 
   /**

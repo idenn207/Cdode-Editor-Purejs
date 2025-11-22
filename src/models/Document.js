@@ -22,7 +22,8 @@ export default class Document {
     return lines;
   }
 
-  _notifyChange() {
+  #notifyChange() {
+    console.log('Document changed');
     this.change_listeners.forEach((_listener) => {
       _listener(this);
     });
@@ -130,12 +131,6 @@ export default class Document {
 
   onChange(_listener) {
     this.change_listeners.push(_listener);
-  }
-
-  #notifyChange() {
-    this.change_listeners.forEach((_listener) => {
-      _listener(this);
-    });
   }
 
   markAsSaved() {

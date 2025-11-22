@@ -63,7 +63,7 @@ export default class EditorPane extends EventEmitter {
     this.content_el.addEventListener('compositionend', () => {
       this.is_composing = false;
       this.#updateDocumentImmediate();
-      this.#scheduleCompletionCheck();
+      this.checkCompletionTrigger();
     });
 
     // input 이벤트
@@ -71,7 +71,7 @@ export default class EditorPane extends EventEmitter {
       if (this.is_composing) return;
 
       this.#updateDocumentImmediate();
-      this.#scheduleCompletionCheck();
+      this.checkCompletionTrigger();
     });
 
     // 붙여넣기
@@ -87,7 +87,7 @@ export default class EditorPane extends EventEmitter {
     // 커서 이동 시
     this.content_el.addEventListener('click', () => {
       this.#updateActiveLine();
-      this.#checkHideCompletion(); // 추가
+      this.#checkHideCompletion();
     });
 
     this.content_el.addEventListener('keyup', (_e) => {
@@ -155,51 +155,38 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 자동완성 체크 스케줄링
-   */
-  #scheduleCompletionCheck() {
-    if (this.completion_check_timeout) {
-      clearTimeout(this.completion_check_timeout);
-    }
-
-    this.completion_check_timeout = setTimeout(() => {
-      this.#checkCompletionTrigger();
-    }, 100);
-  }
-
-  /**
    * 자동완성 트리거 체크
    */
-  #checkCompletionTrigger() {
+  checkCompletionTrigger() {
     if (!this.document) return;
 
     const cursorPos = this.getCursorPosition();
     if (!cursorPos) return;
 
     const currentLine = this.document.getLine(cursorPos.line);
-    if (!currentLine) return;
+    // if (!currentLine) return;
 
     const beforeCursor = currentLine.substring(0, cursorPos.column);
 
     // 'this.' 패턴
-    const thisMatch = beforeCursor.match(/\bthis\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+    const thisMatch = beforeCursor.match(/\bthis\.([a-zA-Z_#$][a-zA-Z0-9_$]*)?$/);
 
     // 'obj.' 패턴 (변수명.멤버명)
-    const objMatch = beforeCursor.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_$][a-zA-Z0-9_$]*)$/);
+    const objMatch = beforeCursor.match(/\b([a-zA-Z_$][a-zA-Z0-9_$]*)\.([a-zA-Z_#$][a-zA-Z0-9_$]*)?$/);
 
     // 일반 식별자
-    const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
+    const prefixMatch = beforeCursor.match(/[a-zA-Z_#$][a-zA-Z0-9_$]*$/);
 
     let prefix = '';
     let contextType = 'normal'; // 'this', 'object', 'normal'
     let objectName = null;
 
     if (thisMatch) {
-      prefix = thisMatch[1];
+      prefix = thisMatch[1] || '';
       contextType = 'this';
     } else if (objMatch) {
       objectName = objMatch[1];
-      prefix = objMatch[2];
+      prefix = objMatch[2] || '';
       contextType = 'object';
     } else if (prefixMatch) {
       prefix = prefixMatch[0];
@@ -214,6 +201,8 @@ export default class EditorPane extends EventEmitter {
         contextType: contextType,
         objectName: objectName,
       });
+    } else {
+      this.emit('completion-cancel');
     }
   }
 
@@ -257,6 +246,17 @@ export default class EditorPane extends EventEmitter {
     if (_e.key === 'Tab' && !this.completion_panel_visible) {
       _e.preventDefault();
       window.document.execCommand('insertText', false, '  ');
+      return;
+    }
+
+    // 자동 따옴표 닫기
+    if (['"', "'", '`'].includes(_e.key) && !this.completion_panel_visible) {
+      _e.preventDefault();
+      if (this.#shouldSkipClosingQuote(_e.key)) {
+        this.#skipClosingQuote();
+        return;
+      }
+      this.#handleAutoCloseQuote(_e.key);
       return;
     }
 
@@ -313,28 +313,30 @@ export default class EditorPane extends EventEmitter {
     if (isBetweenBrackets) {
       // 괄호 사이: 두 줄 추가 + 추가 들여쓰기
       const newIndent = currentIndent + '  ';
-      const insertText = '\n' + newIndent + '\n' + currentIndent;
 
-      window.document.execCommand('insertText', false, insertText);
+      // 현재 커서 위치의 라인 인덱스 저장
+      const currentLineIndex = cursorPos.line;
 
-      // 커서를 중간 줄로 이동
+      // 첫 번째 줄만 삽입 (중간 줄)
+      window.document.execCommand('insertText', false, '\n' + newIndent);
+
+      // Document 즉시 업데이트
+      this.#updateDocumentImmediate();
+
+      // 중간 줄에 커서 배치 후 마지막 줄 삽입
       setTimeout(() => {
-        const selection = window.getSelection();
-        if (selection.rangeCount > 0) {
-          const range = selection.getRangeAt(0);
-          // 한 줄 위로 이동
-          const textNode = range.startContainer;
-          if (textNode.nodeType === Node.TEXT_NODE) {
-            const offset = range.startOffset - (currentIndent.length + 1);
-            if (offset >= 0) {
-              range.setStart(textNode, offset);
-              range.setEnd(textNode, offset);
-              selection.removeAllRanges();
-              selection.addRange(range);
-            }
-          }
-        }
+        // 두 번째 줄 삽입 (닫는 괄호 줄)
+        window.document.execCommand('insertText', false, '\n' + currentIndent);
+
+        // Document 업데이트
+        this.#updateDocumentImmediate();
+
+        // 중간 줄로 커서 이동
+        setTimeout(() => {
+          this.#setCursorToLine(currentLineIndex + 1, newIndent.length);
+        }, 0);
       }, 0);
+
       return;
     }
 
@@ -350,7 +352,83 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 자동 괄호 닫기 - 새로 추가
+   * 자동 따옴표 닫기
+   */
+  #handleAutoCloseQuote(_openQuote) {
+    const closeQuote = { '"': '"', "'": "'", '`': '`' }[_openQuote];
+
+    const cursorPos = this.getCursorPosition();
+    if (!cursorPos) {
+      window.document.execCommand('insertText', false, _openQuote);
+      return;
+    }
+
+    const currentLine = this.document.getLine(cursorPos.line);
+    const afterCursor = currentLine.substring(cursorPos.column);
+
+    // 다음 문자가 따옴표나 공백이면 자동 닫기
+    if (!afterCursor || /^[\s"'`]/.test(afterCursor)) {
+      const selection = window.getSelection();
+      if (selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+
+        // 열기 + 닫기 괄호 삽입
+        const textNode = window.document.createTextNode(_openQuote + closeQuote);
+        range.insertNode(textNode);
+
+        // 커서를 괄호 사이로 이동
+        range.setStart(textNode, 1);
+        range.setEnd(textNode, 1);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        this.#updateDocumentImmediate();
+      }
+    } else {
+      window.document.execCommand('insertText', false, _openQuote);
+    }
+  }
+
+  /**
+   * 닫는 따옴표 건너뛰기 체크
+   */
+  #shouldSkipClosingQuote(_closeQuote) {
+    const cursorPos = this.getCursorPosition();
+    if (!cursorPos) return false;
+
+    const currentLine = this.document.getLine(cursorPos.line);
+    if (!currentLine) return false;
+
+    const afterCursor = currentLine.substring(cursorPos.column);
+
+    // 다음 문자가 동일한 닫는 따옴표면 건너뛰기
+    return afterCursor.startsWith(_closeQuote);
+  }
+
+  /**
+   * 닫는 따옴표 건너뛰기
+   */
+  #skipClosingQuote() {
+    const selection = window.getSelection();
+    if (selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+
+    // 한 문자 앞으로 이동
+    const textNode = range.startContainer;
+    if (textNode.nodeType === Node.TEXT_NODE) {
+      const newOffset = range.startOffset + 1;
+      if (newOffset <= textNode.length) {
+        range.setStart(textNode, newOffset);
+        range.setEnd(textNode, newOffset);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+  }
+
+  /**
+   * 자동 괄호 닫기
    */
   #handleAutoCloseBracket(_openBracket) {
     const closeBracket = { '(': ')', '{': '}', '[': ']' }[_openBracket];
@@ -388,7 +466,7 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 닫는 괄호 건너뛰기 체크 - 새로 추가
+   * 닫는 괄호 건너뛰기 체크
    */
   #shouldSkipClosingBracket(_closeBracket) {
     const cursorPos = this.getCursorPosition();
@@ -404,7 +482,7 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 닫는 괄호 건너뛰기 - 새로 추가
+   * 닫는 괄호 건너뛰기
    */
   #skipClosingBracket() {
     const selection = window.getSelection();
@@ -494,7 +572,7 @@ export default class EditorPane extends EventEmitter {
       if (!this.change_listener) {
         this.change_listener = () => {
           if (!this.is_rendering) {
-            this.#render();
+            this.#renderAllLines();
           }
         };
         _document.onChange(this.change_listener);
@@ -604,9 +682,9 @@ export default class EditorPane extends EventEmitter {
     this.content_el.innerHTML = html;
     this.content_el.contentEditable = 'true';
 
-    setTimeout(() => {
-      this.#updateActiveLine();
-    }, 0);
+    // setTimeout(() => {
+    this.#updateActiveLine();
+    // }, 0);
   }
 
   /**
@@ -733,6 +811,55 @@ export default class EditorPane extends EventEmitter {
     this.#updateDocumentImmediate();
   }
 
+  /**
+   * 특정 라인의 특정 컬럼 위치에 커서 배치
+   */
+  #setCursorToLine(_lineIndex, _column) {
+    try {
+      const codeLines = this.content_el.querySelectorAll('.code-line');
+      if (_lineIndex < 0 || _lineIndex >= codeLines.length) return;
+
+      const targetLine = codeLines[_lineIndex];
+      if (!targetLine) return;
+
+      // 라인 내의 텍스트 노드 찾기
+      const findTextNode = (_node) => {
+        if (_node.nodeType === Node.TEXT_NODE) {
+          return _node;
+        }
+        for (let child of _node.childNodes) {
+          const textNode = findTextNode(child);
+          if (textNode) return textNode;
+        }
+        return null;
+      };
+
+      let textNode = findTextNode(targetLine);
+
+      // 텍스트 노드가 없으면 생성
+      if (!textNode) {
+        textNode = window.document.createTextNode('');
+        targetLine.appendChild(textNode);
+      }
+
+      // 커서 위치 설정
+      const range = window.document.createRange();
+      const selection = window.getSelection();
+
+      const offset = Math.min(_column, textNode.length);
+      range.setStart(textNode, offset);
+      range.setEnd(textNode, offset);
+
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      // 활성 라인 업데이트
+      this.#updateActiveLine();
+    } catch (e) {
+      console.error('Error setting cursor position:', e);
+    }
+  }
+
   getCursorPosition() {
     try {
       const selection = window.getSelection();
@@ -774,12 +901,14 @@ export default class EditorPane extends EventEmitter {
       if (selection.rangeCount === 0) return { top: 0, left: 0 };
 
       const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      const containerRect = this.container.getBoundingClientRect();
+      let rect = range.getBoundingClientRect();
+      if (rect.top <= 0 && rect.left <= 0) {
+        rect = range.startContainer.getBoundingClientRect();
+      }
 
       return {
-        top: rect.bottom - containerRect.top,
-        left: rect.left - containerRect.left,
+        top: rect.top,
+        left: rect.left,
       };
     } catch (e) {
       return { top: 0, left: 0 };
