@@ -85,7 +85,8 @@ export default class EditorController extends EventEmitter {
 
     // 내용 변경
     this.editorPane.on('content-changed', ({ _document, _text }) => {
-      this.emit('content-changed', { _document, _text });
+      // noting
+      return;
     });
 
     // 저장 요청

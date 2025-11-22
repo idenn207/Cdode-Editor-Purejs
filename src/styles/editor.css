@@ -4,13 +4,21 @@
  */
 
 .editor-pane {
-  display: flex;
   height: 100%;
   background-color: var(--bg-primary);
   color: var(--text-primary);
   font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
   font-size: 14px;
   line-height: 1.6;
+}
+
+/* Virtual Scrolling 래퍼 - 스크롤 컨테이너 */
+.editor-content-wrapper {
+  display: flex;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: auto;
+  position: relative;
 }
 
 .line-numbers {
@@ -21,23 +29,18 @@
   user-select: none;
   border-right: 1px solid var(--border-color);
   min-width: 50px;
-  overflow: hidden; /* 스크롤 숨김 */
+  flex-shrink: 0;
 }
 
 .line-number {
-  height: 22.4px;
-  font-size: 13px;
-}
-
-/* Virtual Scrolling 래퍼 추가 */
-.editor-content-wrapper {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: auto;
-  position: relative;
+  min-height: 22.4px;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  /* font-size: 13px; */
 }
 
 .editor-content {
+  flex: 1;
   padding: 10px 16px;
   outline: none;
   white-space: pre;

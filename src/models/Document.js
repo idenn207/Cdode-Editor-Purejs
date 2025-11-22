@@ -49,7 +49,7 @@ export default class Document {
     const before = currentLine.substring(0, _column);
     const after = currentLine.substring(_column);
 
-    const insertLines = _text.split('\n');
+    const insertLines = this.#splitLines(_text);
 
     if (insertLines.length === 1) {
       this.lines[_line] = before + _text + after;
@@ -69,6 +69,8 @@ export default class Document {
         column: lastLine.length,
       };
     }
+    this.content = this.lines.join('\n');
+    window.document.execCommand('insertText', false, _text);
 
     this.is_dirty = true;
     this.#notifyChange();

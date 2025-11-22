@@ -44,8 +44,8 @@ export default class EditorPane extends EventEmitter {
   #initialize() {
     this.container.innerHTML = `
       <div class="editor-pane">
-        <div class="line-numbers"></div>
         <div class="editor-content-wrapper">
+          <div class="line-numbers"></div>
           <div class="editor-content" contenteditable="true" spellcheck="false"></div>
         </div>
       </div>
@@ -73,6 +73,7 @@ export default class EditorPane extends EventEmitter {
 
     // input 이벤트
     this.content_el.addEventListener('input', (_e) => {
+      console.log(1);
       if (this.is_composing || this.is_programmatic_change) return;
 
       this.#syncDOMToDocument();
@@ -146,7 +147,6 @@ export default class EditorPane extends EventEmitter {
    */
   #syncDOMToDocument() {
     if (!this.document) return;
-
     const text = this.#extractText();
     const currentText = this.document.getText();
 
@@ -155,7 +155,6 @@ export default class EditorPane extends EventEmitter {
     // Document의 lines 배열 직접 업데이트
     this.document.content = text;
     this.document.lines = text.split('\n');
-    this.document.is_dirty = true;
 
     // 변경 이벤트 발생
     this.emit('content-changed', {
@@ -451,6 +450,92 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
+   * Document의 커서와 선택 영역을 DOM에 동기화
+   * Document.moveCursor() 또는 Document.setSelection() 호출 시 자동 실행
+   */
+  #syncCursorAndSelectionFromDocument(_doc) {
+    if (!_doc || this.is_programmatic_change) return;
+
+    // 선택 영역이 있으면 선택 영역 설정
+    if (_doc.selection) {
+      this.#setDOMSelection(_doc.selection.start, _doc.selection.end);
+    } else {
+      // 선택 영역이 없으면 커서만 설정
+      this.#setDOMCursor(_doc.cursor.line, _doc.cursor.column);
+    }
+  }
+
+  /**
+   * DOM Selection을 특정 범위로 설정
+   */
+  #setDOMSelection(_start, _end) {
+    try {
+      const codeLines = this.content_el.querySelectorAll('.code-line');
+      if (_start.line < 0 || _start.line >= codeLines.length) return;
+      if (_end.line < 0 || _end.line >= codeLines.length) return;
+
+      const startLine = codeLines[_start.line];
+      const endLine = codeLines[_end.line];
+
+      // 시작 위치 찾기
+      const { node: startNode, offset: startOffset } = this.#findTextNodeAtColumn(startLine, _start.column);
+      const { node: endNode, offset: endOffset } = this.#findTextNodeAtColumn(endLine, _end.column);
+
+      if (!startNode || !endNode) return;
+
+      // Selection 설정
+      const selection = window.getSelection();
+      const range = selection.getRangeAt(0);
+
+      range.setStart(startNode, startOffset);
+      range.setEnd(endNode, endOffset);
+
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      this.#updateActiveLine();
+    } catch (e) {
+      console.error('Error setting DOM selection:', e);
+    }
+  }
+
+  /**
+   * 특정 컬럼 위치의 텍스트 노드와 오프셋 찾기
+   */
+  #findTextNodeAtColumn(_lineElement, _column) {
+    const textNodes = [];
+    const collectTextNodes = (_node) => {
+      if (_node.nodeType === Node.TEXT_NODE) {
+        textNodes.push(_node);
+      } else if (_node.nodeType === Node.ELEMENT_NODE) {
+        for (let child of _node.childNodes) {
+          collectTextNodes(child);
+        }
+      }
+    };
+    collectTextNodes(_lineElement);
+
+    if (textNodes.length === 0) {
+      const textNode = window.document.createTextNode('');
+      _lineElement.appendChild(textNode);
+      return { node: textNode, offset: 0 };
+    }
+
+    let currentOffset = 0;
+    for (const node of textNodes) {
+      const nodeLength = node.textContent.length;
+      if (currentOffset + nodeLength >= _column) {
+        return { node: node, offset: _column - currentOffset };
+      }
+      currentOffset += nodeLength;
+    }
+
+    // 컬럼이 범위를 벗어나면 마지막 노드의 끝
+    const lastNode = textNodes[textNodes.length - 1];
+    return { node: lastNode, offset: lastNode.textContent.length };
+  }
+
+  /**
    * DOM 커서 설정
    */
   #setDOMCursor(_line, _column) {
@@ -503,15 +588,17 @@ export default class EditorPane extends EventEmitter {
       }
 
       // 커서 위치 설정
-      const range = window.document.createRange();
       const selection = window.getSelection();
+      const range = selection.getRangeAt(0);
 
-      const safeOffset = Math.min(nodeOffset, targetNode.textContent.length);
-      range.setStart(targetNode, safeOffset);
-      range.setEnd(targetNode, safeOffset);
+      const offset = Math.min(nodeOffset, targetNode.textContent.length);
+      if (offset >= 0) {
+        range.setStart(targetNode, offset);
+        range.setEnd(targetNode, offset);
 
-      selection.removeAllRanges();
-      selection.addRange(range);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
 
       // 활성 라인 업데이트
       this.#updateActiveLine();
@@ -713,10 +800,12 @@ export default class EditorPane extends EventEmitter {
       this.#render();
 
       if (!this.change_listener) {
-        this.change_listener = () => {
+        this.change_listener = (_doc) => {
           if (!this.is_rendering) {
             this.#renderAllLines();
           }
+          // Document의 커서/선택 변경을 DOM에 반영
+          this.#syncCursorAndSelectionFromDocument(_doc);
         };
         _document.onChange(this.change_listener);
       }
@@ -773,8 +862,9 @@ export default class EditorPane extends EventEmitter {
     this.virtual_scroller.setTotalLines(lineCount);
 
     const { start, end } = this.virtual_scroller.getVisibleRange();
-    this.#renderLineNumbersVirtual(start, end);
-    this.#renderContentVirtual(start, end);
+
+    // 통합 렌더링: 동일한 offset 적용
+    this.#renderLineNumbersAndContentVirtual(start, end);
 
     const totalHeight = this.virtual_scroller.getTotalHeight();
     this.content_el.style.height = `${totalHeight}px`;
@@ -796,18 +886,29 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 줄 번호 렌더링 (Virtual)
+   * 줄 번호와 내용 통합 렌더링 (Virtual) - 동일한 offset 보장
    */
-  #renderLineNumbersVirtual(_start, _end) {
-    let html = '';
+  #renderLineNumbersAndContentVirtual(_start, _end) {
+    const lines = this.document.lines;
+    const language = this.#detectLanguage();
     const topOffset = _start * 22.4;
-    html += `<div style="height: ${topOffset}px;"></div>`;
 
+    // 줄 번호 렌더링
+    let lineNumbersHTML = `<div style="height: ${topOffset}px;"></div>`;
     for (let i = _start; i < _end; i++) {
-      html += `<div class="line-number">${i + 1}</div>`;
+      lineNumbersHTML += `<div class="line-number">${i + 1}</div>`;
     }
+    this.line_numbers_el.innerHTML = lineNumbersHTML;
 
-    this.line_numbers_el.innerHTML = html;
+    // 내용 렌더링
+    let contentHTML = `<div style="height: ${topOffset}px;"></div>`;
+    for (let i = _start; i < _end; i++) {
+      const line = lines[i] || '\n';
+      const highlightedHTML = this.syntax_renderer.renderLine(line, language);
+      contentHTML += `<div class="code-line">${highlightedHTML}</div>`;
+    }
+    this.content_el.innerHTML = contentHTML;
+    this.content_el.contentEditable = 'true';
   }
 
   /**
@@ -832,27 +933,6 @@ export default class EditorPane extends EventEmitter {
     this.content_el.contentEditable = 'true';
 
     this.#updateActiveLine();
-  }
-
-  /**
-   * 텍스트 내용 렌더링 (Virtual)
-   */
-  #renderContentVirtual(_start, _end) {
-    const lines = this.document.lines;
-    const language = this.#detectLanguage();
-    let html = '';
-
-    const topOffset = _start * 22.4;
-    html += `<div style="height: ${topOffset}px;"></div>`;
-
-    for (let i = _start; i < _end; i++) {
-      const line = lines[i] || '\n';
-      const highlightedHTML = this.syntax_renderer.renderLine(line, language);
-      html += `<div class="code-line">${highlightedHTML}</div>`;
-    }
-
-    this.content_el.innerHTML = html;
-    this.content_el.contentEditable = 'true';
   }
 
   /**
