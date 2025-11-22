@@ -20,6 +20,22 @@ export default class ValidationUtils {
   }
 
   /**
+   * assertNonNull - notNullOrUndefined의 alias
+   */
+  static assertNonNull(_value, _name = 'Value') {
+    return this.notNullOrUndefined(_value, _name);
+  }
+
+  /**
+   * 상태 검증
+   */
+  static assertState(_condition, _message = 'Invalid state') {
+    if (!_condition) {
+      throw new Error(_message);
+    }
+  }
+
+  /**
    * 타입 체크
    */
   static isType(_value, _type) {
@@ -86,7 +102,7 @@ export default class ValidationUtils {
 
   static assertNumber(_value, _name = 'Value') {
     if (!this.isNumber(_value)) {
-      throw new Error(`${_name} must be a number, got ${typeof _value}`);
+      throw new Error(`${_name} must be a valid number`);
     }
     return _value;
   }
@@ -103,6 +119,14 @@ export default class ValidationUtils {
     this.assertNumber(_value, _name);
     if (!this.isPositive(_value)) {
       throw new Error(`${_name} must be positive`);
+    }
+    return _value;
+  }
+
+  static assertNegative(_value, _name = 'Value') {
+    this.assertNumber(_value, _name);
+    if (!this.isNegative(_value)) {
+      throw new Error(`${_name} must be negative`);
     }
     return _value;
   }
@@ -124,7 +148,7 @@ export default class ValidationUtils {
 
   static assertBoolean(_value, _name = 'Value') {
     if (!this.isBoolean(_value)) {
-      throw new Error(`${_name} must be a boolean, got ${typeof _value}`);
+      throw new Error(`${_name} must be a boolean`);
     }
     return _value;
   }
@@ -138,7 +162,7 @@ export default class ValidationUtils {
 
   static assertFunction(_value, _name = 'Value') {
     if (!this.isFunction(_value)) {
-      throw new Error(`${_name} must be a function, got ${typeof _value}`);
+      throw new Error(`${_name} must be a function`);
     }
     return _value;
   }
@@ -147,7 +171,7 @@ export default class ValidationUtils {
    * 객체 체크
    */
   static isObject(_value) {
-    return typeof _value === 'object' && _value !== null && !Array.isArray(_value);
+    return typeof _value === 'object' && _value !== null;
   }
 
   static isPlainObject(_value) {
@@ -161,6 +185,13 @@ export default class ValidationUtils {
     return _value;
   }
 
+  static assertPlainObject(_value, _name = 'Value') {
+    if (!this.isPlainObject(_value)) {
+      throw new Error(`${_name} must be a plain object`);
+    }
+    return _value;
+  }
+
   /**
    * 배열 체크
    */
@@ -168,7 +199,11 @@ export default class ValidationUtils {
     return Array.isArray(_value);
   }
 
-  static isNonEmptyArray(_value) {
+  static isEmpty(_value) {
+    return this.isArray(_value) && _value.length === 0;
+  }
+
+  static isNonEmpty(_value) {
     return this.isArray(_value) && _value.length > 0;
   }
 
@@ -181,7 +216,7 @@ export default class ValidationUtils {
 
   static assertNonEmptyArray(_value, _name = 'Value') {
     this.assertArray(_value, _name);
-    if (_value.length === 0) {
+    if (this.isEmpty(_value)) {
       throw new Error(`${_name} cannot be empty`);
     }
     return _value;
@@ -196,101 +231,30 @@ export default class ValidationUtils {
 
   static assertInstanceOf(_value, _class, _name = 'Value') {
     if (!this.isInstanceOf(_value, _class)) {
-      throw new Error(`${_name} must be an instance of ${_class.name}`);
+      throw new Error(`${_name} must be instance of ${_class.name}`);
     }
     return _value;
   }
 
   /**
-   * 날짜 체크
+   * Enum 체크
    */
-  static isDate(_value) {
-    return _value instanceof Date && !isNaN(_value.getTime());
+  static isEnum(_value, _allowedValues) {
+    return _allowedValues.includes(_value);
   }
 
-  static assertDate(_value, _name = 'Value') {
-    if (!this.isDate(_value)) {
-      throw new Error(`${_name} must be a valid Date`);
+  static assertEnum(_value, _allowedValues, _name = 'Value') {
+    if (!this.isEnum(_value, _allowedValues)) {
+      throw new Error(`${_name} must be one of: ${_allowedValues.join(', ')}, got ${_value}`);
     }
     return _value;
   }
 
   /**
-   * 정규식 체크
-   */
-  static isRegExp(_value) {
-    return _value instanceof RegExp;
-  }
-
-  static matchesPattern(_value, _pattern) {
-    return this.isString(_value) && _pattern.test(_value);
-  }
-
-  static assertPattern(_value, _pattern, _name = 'Value') {
-    this.assertString(_value, _name);
-    if (!this.matchesPattern(_value, _pattern)) {
-      throw new Error(`${_name} does not match pattern ${_pattern}`);
-    }
-    return _value;
-  }
-
-  /**
-   * 이메일 체크
-   */
-  static isEmail(_value) {
-    const email_pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return this.matchesPattern(_value, email_pattern);
-  }
-
-  static assertEmail(_value, _name = 'Email') {
-    if (!this.isEmail(_value)) {
-      throw new Error(`${_name} must be a valid email address`);
-    }
-    return _value;
-  }
-
-  /**
-   * URL 체크
-   */
-  static isUrl(_value) {
-    try {
-      new URL(_value);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  static assertUrl(_value, _name = 'URL') {
-    if (!this.isUrl(_value)) {
-      throw new Error(`${_name} must be a valid URL`);
-    }
-    return _value;
-  }
-
-  /**
-   * 파일 확장자 체크
-   */
-  static hasExtension(_filename, _extension) {
-    return _filename.endsWith(_extension);
-  }
-
-  static hasAnyExtension(_filename, _extensions) {
-    return _extensions.some((_ext) => this.hasExtension(_filename, _ext));
-  }
-
-  static assertExtension(_filename, _extension, _name = 'File') {
-    if (!this.hasExtension(_filename, _extension)) {
-      throw new Error(`${_name} must have extension ${_extension}`);
-    }
-    return _filename;
-  }
-
-  /**
-   * 배열 내 포함 체크
+   * 배열 요소 포함 체크
    */
   static contains(_array, _value) {
-    return _array.includes(_value);
+    return this.isArray(_array) && _array.includes(_value);
   }
 
   static assertContains(_array, _value, _name = 'Value') {
@@ -387,5 +351,53 @@ export default class ValidationUtils {
     } catch (error) {
       return { valid: false, error: error.message };
     }
+  }
+
+  /**
+   * 패턴 검증
+   */
+  static matchesPattern(_value, _pattern) {
+    return _pattern.test(_value);
+  }
+
+  static assertPattern(_value, _pattern, _name = 'Value') {
+    if (!this.matchesPattern(_value, _pattern)) {
+      throw new Error(`${_name} does not match required pattern`);
+    }
+    return _value;
+  }
+
+  /**
+   * 이메일 검증
+   */
+  static isEmail(_value) {
+    const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return this.isString(_value) && this.matchesPattern(_value, EMAIL_PATTERN);
+  }
+
+  static assertEmail(_value, _name = 'Email') {
+    if (!this.isEmail(_value)) {
+      throw new Error(`${_name} must be a valid email address`);
+    }
+    return _value;
+  }
+
+  /**
+   * URL 검증
+   */
+  static isURL(_value) {
+    try {
+      new URL(_value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  static assertURL(_value, _name = 'URL') {
+    if (!this.isURL(_value)) {
+      throw new Error(`${_name} must be a valid URL`);
+    }
+    return _value;
   }
 }

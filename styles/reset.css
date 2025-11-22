@@ -1,7 +1,6 @@
 /**
- * styles/reset.css
- * 
- * CSS Reset - 브라우저 기본 스타일 초기화
+ * 파일: styles/reset.css
+ * 기능: 브라우저 기본 스타일 초기화
  */
 
 /* Box sizing */
@@ -11,32 +10,27 @@
   box-sizing: border-box;
 }
 
-/* Remove default margin and padding */
+/* Reset margins and paddings */
 * {
   margin: 0;
   padding: 0;
 }
 
-/* HTML and Body */
-html,
+/* Root element */
+html {
+  height: 100%;
+  font-size: 16px;
+}
+
+/* Body */
 body {
   height: 100%;
-  width: 100%;
-}
-
-html {
-  -webkit-text-size-adjust: 100%;
-  -moz-text-size-adjust: 100%;
-  text-size-adjust: 100%;
-}
-
-body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Images and media */
+/* Images */
 img,
 picture,
 video,
@@ -52,13 +46,14 @@ button,
 textarea,
 select {
   font: inherit;
-  color: inherit;
 }
 
+/* Remove default button styles */
 button {
-  border: none;
   background: none;
+  border: none;
   cursor: pointer;
+  color: inherit;
 }
 
 /* Remove default list styles */
@@ -73,7 +68,7 @@ a {
   color: inherit;
 }
 
-/* Typography */
+/* Text overflow */
 p,
 h1,
 h2,
@@ -84,27 +79,26 @@ h6 {
   overflow-wrap: break-word;
 }
 
-/* Accessibility */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border-width: 0;
+/* Remove default focus outline */
+:focus {
+  outline: none;
 }
 
-/* Print */
-@media print {
-  *,
-  *::before,
-  *::after {
-    background: transparent !important;
-    color: #000 !important;
-    box-shadow: none !important;
-    text-shadow: none !important;
-  }
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(121, 121, 121, 0.4);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 100, 100, 0.7);
 }

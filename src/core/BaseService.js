@@ -1,11 +1,14 @@
 /**
  * 파일: src/core/BaseService.js
  * 기능: 서비스 추상 베이스 클래스
- * 책임: 핵심 비즈니스 로직, 데이터 처리
+ * 책임: 핵심 비즈니스 로직, 데이터 처리, 이벤트 발행
  */
 
-export default class BaseService {
+import EventEmitter from '../utils/EventEmitter.js';
+
+export default class BaseService extends EventEmitter {
   constructor() {
+    super();
     this.is_initialized = false;
     this.is_destroyed = false;
   }
@@ -26,6 +29,10 @@ export default class BaseService {
    */
   destroy() {
     if (this.is_destroyed) return;
+
+    // 이벤트 리스너 제거
+    this.removeAllListeners();
+
     this.is_initialized = false;
     this.is_destroyed = true;
   }
@@ -38,6 +45,13 @@ export default class BaseService {
       throw new Error(`[${this.constructor.name}] ${_name} cannot be null or undefined`);
     }
     return _value;
+  }
+
+  /**
+   * validateRequired - validateNotNull의 alias
+   */
+  validateRequired(_value, _name) {
+    return this.validateNotNull(_value, _name);
   }
 
   validateType(_value, _type, _name) {
@@ -89,7 +103,14 @@ export default class BaseService {
 
   validateInstanceOf(_value, _class, _name) {
     if (!(_value instanceof _class)) {
-      throw new Error(`[${this.constructor.name}] ${_name} must be an instance of ${_class.name}`);
+      throw new Error(`[${this.constructor.name}] ${_name} must be instance of ${_class.name}`);
+    }
+    return _value;
+  }
+
+  validateEnum(_value, _allowedValues, _name) {
+    if (!_allowedValues.includes(_value)) {
+      throw new Error(`[${this.constructor.name}] ${_name} must be one of ${_allowedValues.join(', ')}, got ${_value}`);
     }
     return _value;
   }
@@ -97,40 +118,23 @@ export default class BaseService {
   /**
    * 상태 검증
    */
-  validateInitialized() {
-    if (!this.is_initialized) {
-      throw new Error(`[${this.constructor.name}] Service is not initialized`);
-    }
-  }
-
-  validateNotDestroyed() {
-    if (this.is_destroyed) {
-      throw new Error(`[${this.constructor.name}] Service has been destroyed`);
+  validateState(_condition, _message) {
+    if (!_condition) {
+      throw new Error(`[${this.constructor.name}] ${_message}`);
     }
   }
 
   /**
-   * 에러 처리 헬퍼
+   * 에러 처리
    */
-  createError(_message, _details = {}) {
-    const error = new Error(`[${this.constructor.name}] ${_message}`);
-    Object.assign(error, _details);
-    return error;
-  }
-
   handleError(_error, _context = 'Unknown') {
     console.error(`[${this.constructor.name}] Error in ${_context}:`, _error);
-    throw _error;
-  }
-
-  /**
-   * 디버그 정보
-   */
-  getDebugInfo() {
-    return {
-      name: this.constructor.name,
-      is_initialized: this.is_initialized,
-      is_destroyed: this.is_destroyed,
-    };
+    this.emit('error', {
+      service: this.constructor.name,
+      context: _context,
+      error: _error,
+      message: _error.message || String(_error),
+      timestamp: new Date().toISOString(),
+    });
   }
 }

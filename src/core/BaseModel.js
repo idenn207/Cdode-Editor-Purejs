@@ -130,7 +130,7 @@ export default class BaseModel extends EventEmitter {
     this._is_dirty = _dirty;
 
     if (old_dirty !== _dirty) {
-      this.emit('dirty-changed', { is_dirty: _dirty });
+      this.emit('dirty:changed', { is_dirty: _dirty });
     }
   }
 
@@ -155,47 +155,34 @@ export default class BaseModel extends EventEmitter {
    * 데이터 비교
    */
   equals(_other) {
-    if (!(_other instanceof BaseModel)) {
+    if (!(_other instanceof this.constructor)) {
       return false;
     }
 
-    const this_keys = Object.keys(this._data).sort();
-    const other_keys = Object.keys(_other._data).sort();
+    const keys1 = Object.keys(this._data);
+    const keys2 = Object.keys(_other._data);
 
-    if (this_keys.length !== other_keys.length) {
+    if (keys1.length !== keys2.length) {
       return false;
     }
 
-    for (let i = 0; i < this_keys.length; i++) {
-      if (this_keys[i] !== other_keys[i]) {
-        return false;
-      }
-
-      if (this._data[this_keys[i]] !== _other._data[this_keys[i]]) {
-        return false;
-      }
-    }
-
-    return true;
+    return keys1.every((_key) => this._data[_key] === _other._data[_key]);
   }
 
   /**
    * 검증
    */
   validate() {
-    // 하위 클래스에서 선택적 구현
-    return true;
+    // 하위 클래스에서 구현
+    return { valid: true, errors: [] };
   }
 
   /**
-   * 디버그 정보
+   * 모델 파괴
    */
-  getDebugInfo() {
-    return {
-      name: this.constructor.name,
-      data: this.getAll(),
-      is_dirty: this._is_dirty,
-      keys_count: Object.keys(this._data).length,
-    };
+  destroy() {
+    this._data = {};
+    this._is_dirty = false;
+    this.removeAllListeners();
   }
 }

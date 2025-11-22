@@ -21,10 +21,16 @@ export default class BaseController extends EventEmitter {
   }
 
   /**
-   * Abstract 메서드 - 하위 클래스에서 반드시 구현
+   * 컨트롤러 초기화
+   * 하위 클래스에서 오버라이드하여 사용
    */
   initialize() {
-    throw new Error(`${this.constructor.name}.initialize() must be implemented`);
+    if (this.is_initialized) {
+      console.warn(`${this.constructor.name} is already initialized`);
+      return;
+    }
+    // 기본 초기화 로직 (하위 클래스에서 super.initialize() 호출 가능)
+    this.is_initialized = true;
   }
 
   /**
@@ -41,7 +47,6 @@ export default class BaseController extends EventEmitter {
     }
 
     this.initialize();
-    this.is_initialized = true;
     this.emit('started');
   }
 

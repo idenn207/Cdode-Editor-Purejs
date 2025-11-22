@@ -1,13 +1,7 @@
 /**
- * src/app.js
- *
- * 메인 애플리케이션 엔트리 포인트
- *
- * 책임:
- * - 모든 서비스, 컨트롤러, 뷰 초기화
- * - 컴포넌트 간 이벤트 연결
- * - 전역 에러 처리
- * - 애플리케이션 생명주기 관리
+ * 파일: src/app.js
+ * 기능: 메인 애플리케이션 엔트리 포인트
+ * 수정: 폴더 선택을 사용자 액션(버튼 클릭) 후에 실행
  */
 
 // Core
@@ -43,9 +37,6 @@ import ValidationUtils from './utils/ValidationUtils.js';
  * CodeEditor 메인 애플리케이션 클래스
  */
 export default class CodeEditorApp extends BaseController {
-  /**
-   * 생성자
-   */
   constructor() {
     super();
 
@@ -77,8 +68,8 @@ export default class CodeEditorApp extends BaseController {
     };
 
     // 상태
-    this.is_initialized = false;
     this.is_running = false;
+    this.folder_selected = false;
   }
 
   /**
@@ -100,12 +91,16 @@ export default class CodeEditorApp extends BaseController {
       // 4. 이벤트 연결
       this.#connectEvents();
 
-      // 5. 전역 에러 핸들러
+      // 5. 에러 핸들러 설정
       this.#setupErrorHandlers();
 
-      this.is_initialized = true;
-      console.log('✅ CodeEditor initialized successfully');
+      // 6. 폴더 선택 버튼 표시
+      this.#showFolderSelectButton();
+
+      super.initialize();
+      console.log('✅ CodeEditor initialized');
     } catch (error) {
+      console.error('❌ Failed to initialize:', error);
       this.handleError(error, 'initialize');
       throw error;
     }
@@ -117,29 +112,12 @@ export default class CodeEditorApp extends BaseController {
   async #initializeServices() {
     console.log('  📦 Initializing services...');
 
-    // FileCacheService
-    this.services.file_cache = new FileCacheService();
-    this.services.file_cache.initialize();
-
-    // FileSystemService
     this.services.file_system = new FileSystemService();
-    this.services.file_system.initialize();
-
-    // LanguageService
-    this.services.language = new LanguageService();
-    this.services.language.initialize();
-
-    // CompletionService
-    this.services.completion = new CompletionService(this.services.language);
-    this.services.completion.initialize();
-
-    // LinterService
-    this.services.linter = new LinterService(this.services.language);
-    this.services.linter.initialize();
-
-    // SearchService
+    this.services.file_cache = new FileCacheService();
+    this.services.completion = new CompletionService();
+    this.services.linter = new LinterService();
     this.services.search = new SearchService();
-    this.services.search.initialize();
+    this.services.language = new LanguageService();
 
     console.log('  ✅ Services initialized');
   }
@@ -150,27 +128,18 @@ export default class CodeEditorApp extends BaseController {
   #initializeViews() {
     console.log('  🎨 Initializing views...');
 
-    // SyntaxRenderer
-    this.views.syntax_renderer = new SyntaxRenderer(this.services.language);
-
-    // Sidebar
     this.views.sidebar = new Sidebar('Sidebar');
-    this.views.sidebar.mount();
-
-    // TabBar
     this.views.tab_bar = new TabBar('TabBar');
-    this.views.tab_bar.mount();
-
-    // EditorPane
-    this.views.editor_pane = new EditorPane('EditorPane', this.views.syntax_renderer, this.services.completion, this.services.search);
-    this.views.editor_pane.mount();
-
-    // CompletionPanel
+    this.views.editor_pane = new EditorPane('EditorPane');
     this.views.completion_panel = new CompletionPanel('CompletionPanel');
-    this.views.completion_panel.mount();
-
-    // SearchPanel
     this.views.search_panel = new SearchPanel('SearchPanel');
+    this.views.syntax_renderer = new SyntaxRenderer();
+
+    // 뷰 마운트
+    this.views.sidebar.mount();
+    this.views.tab_bar.mount();
+    this.views.editor_pane.mount();
+    this.views.completion_panel.mount();
     this.views.search_panel.mount();
 
     console.log('  ✅ Views initialized');
@@ -186,14 +155,14 @@ export default class CodeEditorApp extends BaseController {
     this.controllers.tab = new TabController();
     this.controllers.tab.initialize();
 
-    // FileController
-    this.controllers.file = new FileController(this.services.file_system);
-    this.controllers.file.initialize();
-
     // EditorController
     this.controllers.editor = new EditorController(this.controllers.tab, this.services.file_system);
     this.controllers.editor.initialize();
     this.controllers.editor.setEditorPane(this.views.editor_pane);
+
+    // FileController
+    this.controllers.file = new FileController(this.services.file_system);
+    this.controllers.file.initialize();
 
     console.log('  ✅ Controllers initialized');
   }
@@ -204,93 +173,52 @@ export default class CodeEditorApp extends BaseController {
   #connectEvents() {
     console.log('  🔗 Connecting events...');
 
-    // ========================================
-    // FileController → TabController
-    // ========================================
-    this.controllers.file.on('file-opened', (_event) => {
-      const { file_node, content } = _event;
-      this.controllers.tab.openDocument(file_node, content);
-    });
-
-    // ========================================
     // FileController → Sidebar
-    // ========================================
-    this.controllers.file.on('directory-selected', (_event) => {
-      const { root_node } = _event;
-      this.views.sidebar.setRootNode(root_node);
-      this.views.sidebar.render();
+    this.controllers.file.on('directory:loaded', (_rootNode) => {
+      this.views.sidebar.render(_rootNode);
+      this.folder_selected = true;
+      this.#hideFolderSelectButton();
     });
 
-    // ========================================
     // Sidebar → FileController
-    // ========================================
-    this.views.sidebar.on('file-selected', (_event) => {
-      const { file_node } = _event;
-      this.controllers.file.openFile(file_node);
+    this.views.sidebar.on('file:selected', (_fileNode) => {
+      this.controllers.file.openFile(_fileNode);
     });
 
-    // ========================================
-    // TabController → EditorController
-    // ========================================
-    this.controllers.tab.on('document-activated', (_event) => {
-      const { document } = _event;
-      this.controllers.editor.displayDocument(document);
+    // FileController → TabController
+    this.controllers.file.on('file:opened', (_event) => {
+      const { node, content } = _event;
+      this.controllers.tab.openDocument(node, content);
     });
 
-    this.controllers.tab.on('document-closed', (_event) => {
-      this.views.editor_pane.clear();
-    });
-
-    // ========================================
     // TabController → TabBar
-    // ========================================
-    this.controllers.tab.on('document-opened', (_event) => {
-      const { document } = _event;
-      this.views.tab_bar.addTab(document);
+    this.controllers.tab.on('document:opened', (_document) => {
+      this.views.tab_bar.addTab(_document);
     });
 
-    this.controllers.tab.on('document-activated', (_event) => {
-      const { document } = _event;
-      this.views.tab_bar.setActiveTab(document);
+    this.controllers.tab.on('document:activated', (_document) => {
+      this.views.tab_bar.activateTab(_document);
     });
 
-    this.controllers.tab.on('document-closed', (_event) => {
-      const { document } = _event;
-      this.views.tab_bar.removeTab(document);
+    this.controllers.tab.on('document:closed', (_document) => {
+      this.views.tab_bar.removeTab(_document);
     });
 
-    this.controllers.tab.on('document-changed', (_event) => {
-      const { document } = _event;
-      this.views.tab_bar.updateTab(document);
+    this.controllers.tab.on('document:changed', (_document) => {
+      this.views.tab_bar.updateTab(_document);
     });
 
-    // ========================================
     // TabBar → TabController
-    // ========================================
-    this.views.tab_bar.on('tab-clicked', (_event) => {
-      const { document } = _event;
-      this.controllers.tab.activateDocument(document);
+    this.views.tab_bar.on('tab:activated', (_document) => {
+      this.controllers.tab.activateDocument(_document);
     });
 
-    this.views.tab_bar.on('tab-close-clicked', (_event) => {
-      const { document } = _event;
-      this.controllers.tab.closeDocument(document);
+    this.views.tab_bar.on('tab:closed', (_document) => {
+      this.controllers.tab.closeDocument(_document);
     });
 
-    // ========================================
-    // EditorPane → EditorController
-    // ========================================
-    this.views.editor_pane.on('content-changed', (_event) => {
-      const document = this.controllers.tab.getActiveDocument();
-      if (document) {
-        document.setContent(_event.content);
-      }
-    });
-
-    // ========================================
-    // EditorController → FileController
-    // ========================================
-    this.controllers.editor.on('save-requested', (_event) => {
+    // EditorController → FileController (저장)
+    this.controllers.editor.on('request:save', (_event) => {
       const { document } = _event;
       this.controllers.file.saveFile(document.getFileNode(), document.getContent());
     });
@@ -319,22 +247,67 @@ export default class CodeEditorApp extends BaseController {
   }
 
   /**
+   * 폴더 선택 버튼 표시
+   */
+  #showFolderSelectButton() {
+    // Sidebar 상단 폴더 열기 버튼
+    const button = document.getElementById('OpenFolderBtn');
+    if (button) {
+      button.style.display = 'inline-flex';
+      button.addEventListener('click', async () => {
+        console.log('📁 Sidebar 폴더 열기 버튼 클릭');
+        await this.#handleFolderSelect();
+      });
+    }
+
+    // Empty State 폴더 열기 버튼
+    const emptyButton = document.getElementById('EmptyOpenFolderBtn');
+    if (emptyButton) {
+      emptyButton.addEventListener('click', async () => {
+        console.log('📁 Empty State 폴더 열기 버튼 클릭');
+        await this.#handleFolderSelect();
+      });
+    }
+  }
+
+  /**
+   * 폴더 선택 버튼 숨김
+   */
+  #hideFolderSelectButton() {
+    // Empty State 숨김
+    const emptySidebar = document.getElementById('EmptySidebar');
+    if (emptySidebar) {
+      emptySidebar.style.display = 'none';
+    }
+  }
+
+  /**
+   * 폴더 선택 처리
+   */
+  async #handleFolderSelect() {
+    try {
+      await this.controllers.file.selectDirectory();
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.log('사용자가 폴더 선택을 취소했습니다.');
+      } else {
+        console.error('폴더 선택 중 오류:', error);
+        alert('폴더를 열 수 없습니다: ' + error.message);
+      }
+    }
+  }
+
+  /**
    * 애플리케이션 시작
    */
   async start() {
     ValidationUtils.assertState(this.is_initialized, 'Application must be initialized before starting');
-
     ValidationUtils.assertState(!this.is_running, 'Application is already running');
 
     try {
       console.log('▶️  Starting CodeEditor...');
-
-      // 디렉토리 선택 프롬프트
-      await this.controllers.file.selectDirectory();
-
       this.is_running = true;
-      console.log('✅ CodeEditor started');
-
+      console.log('✅ CodeEditor started (waiting for folder selection)');
       this.emit('started');
     } catch (error) {
       this.handleError(error, 'start');
@@ -354,7 +327,7 @@ export default class CodeEditorApp extends BaseController {
       // 모든 수정사항 저장 확인
       const dirtyDocs = this.controllers.tab.getDirtyDocuments();
       if (dirtyDocs.length > 0) {
-        const confirmStop = window.confirm(`${dirtyDocs.length}개의 파일이 수정되었습니다. 저장하지 않고 종료하시겠습니까?`);
+        const confirmStop = window.confirm(`${dirtyDocs.length}개의 파일이 수정되었습니다. 정말 종료하시겠습니까?`);
         if (!confirmStop) {
           return;
         }
@@ -362,7 +335,6 @@ export default class CodeEditorApp extends BaseController {
 
       this.is_running = false;
       console.log('✅ CodeEditor stopped');
-
       this.emit('stopped');
     } catch (error) {
       this.handleError(error, 'stop');
@@ -371,80 +343,73 @@ export default class CodeEditorApp extends BaseController {
   }
 
   /**
-   * 애플리케이션 종료
+   * 애플리케이션 파괴
    */
   destroy() {
-    if (this.is_running) {
-      this.stop();
+    try {
+      console.log('🗑️  Destroying CodeEditor...');
+
+      // 정지
+      if (this.is_running) {
+        this.stop();
+      }
+
+      // Controllers 파괴
+      Object.values(this.controllers).forEach((_controller) => {
+        if (_controller && _controller.destroy) {
+          _controller.destroy();
+        }
+      });
+
+      // Views 파괴
+      Object.values(this.views).forEach((_view) => {
+        if (_view && _view.destroy) {
+          _view.destroy();
+        }
+      });
+
+      // Services 파괴
+      Object.values(this.services).forEach((_service) => {
+        if (_service && _service.destroy) {
+          _service.destroy();
+        }
+      });
+
+      super.destroy();
+      console.log('✅ CodeEditor destroyed');
+    } catch (error) {
+      this.handleError(error, 'destroy');
+      throw error;
     }
-
-    console.log('🗑️  Destroying CodeEditor...');
-
-    // Controllers 정리
-    Object.values(this.controllers).forEach((_controller) => {
-      if (_controller && _controller.destroy) {
-        _controller.destroy();
-      }
-    });
-
-    // Views 정리
-    Object.values(this.views).forEach((_view) => {
-      if (_view && _view.destroy) {
-        _view.destroy();
-      }
-    });
-
-    // Services 정리
-    Object.values(this.services).forEach((_service) => {
-      if (_service && _service.destroy) {
-        _service.destroy();
-      }
-    });
-
-    this.is_initialized = false;
-    console.log('✅ CodeEditor destroyed');
-
-    super.destroy();
-  }
-
-  /**
-   * 디버그 정보
-   */
-  getDebugInfo() {
-    return {
-      is_initialized: this.is_initialized,
-      is_running: this.is_running,
-      services: Object.keys(this.services),
-      views: Object.keys(this.views),
-      controllers: Object.keys(this.controllers),
-      active_document: this.controllers.tab?.getActiveDocument()?.getFileNode()?.getName(),
-      document_count: this.controllers.tab?.getDocumentCount() || 0,
-      dirty_count: this.controllers.tab?.getDirtyDocuments().length || 0,
-    };
   }
 }
 
 /**
- * 애플리케이션 인스턴스 생성 및 시작
+ * 메인 진입점
  */
 async function main() {
-  const app = new CodeEditorApp();
-
   try {
+    console.log('='.repeat(50));
+    console.log('CodeEditor Application Starting...');
+    console.log('='.repeat(50));
+
+    const app = new CodeEditorApp();
     await app.initialize();
     await app.start();
 
-    // 전역 접근을 위해 window 객체에 추가
-    window.codeEditorApp = app;
+    // 전역 변수로 노출 (디버깅용)
+    window.codeEditor = app;
 
-    console.log('🎉 CodeEditor is ready!');
-    console.log('📊 Debug Info:', app.getDebugInfo());
+    console.log('='.repeat(50));
+    console.log('CodeEditor Application Ready!');
+    console.log('='.repeat(50));
   } catch (error) {
-    console.error('❌ Failed to start CodeEditor:', error);
+    console.error('Failed to start application:', error);
+    alert('애플리케이션을 시작할 수 없습니다. 콘솔을 확인하세요.');
   }
 }
 
-// DOM 로드 완료 후 시작
+// DOM 준비 완료 후 실행
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', main);
 } else {

@@ -1,6 +1,6 @@
 /**
  * 파일: src/controllers/FileController.js
- * 기능: 파일 작업 관리 (열기, 저장, 삭제 등)
+ * 기능: 파일 작업 관리 (열기, 저장, 생성, 삭제 등)
  * 책임:
  * - FileSystemService와 상호작용
  * - 파일 작업 결과를 이벤트로 발행
@@ -23,13 +23,7 @@ export default class FileController extends BaseController {
    */
   initialize() {
     super.initialize();
-
-    const fileSystem = this.getService('fileSystem');
-
-    // FileSystemService 이벤트 구독
-    fileSystem.on('directory-selected', (_rootNode) => {
-      this.emit('directory-loaded', _rootNode);
-    });
+    // 초기화 로직 (필요시 추가)
   }
 
   /**
@@ -37,14 +31,27 @@ export default class FileController extends BaseController {
    */
   async selectDirectory() {
     try {
+      console.log('[FileController] selectDirectory 호출됨');
       const fileSystem = this.getService('fileSystem');
-      await fileSystem.selectDirectory();
+      console.log('[FileController] FileSystemService 가져옴');
+
+      const rootNode = await fileSystem.selectDirectory();
+      console.log('[FileController] 폴더 선택 완료:', rootNode);
+
+      if (rootNode) {
+        console.log('[FileController] directory:loaded 이벤트 발행');
+        this.emit('directory:loaded', rootNode);
+      } else {
+        console.log('[FileController] 사용자가 폴더 선택을 취소함');
+      }
     } catch (error) {
+      console.error('[FileController] 에러 발생:', error);
       this.handleError(error, 'selectDirectory');
       this.emit('error', {
         message: '디렉토리 선택 실패',
         error,
       });
+      throw error;
     }
   }
 
@@ -63,7 +70,7 @@ export default class FileController extends BaseController {
       const fileSystem = this.getService('fileSystem');
       const content = await fileSystem.readFile(_fileNode);
 
-      this.emit('file-opened', {
+      this.emit('file:opened', {
         node: _fileNode,
         content,
       });
@@ -89,7 +96,7 @@ export default class FileController extends BaseController {
       const fileSystem = this.getService('fileSystem');
       await fileSystem.writeFile(_fileNode, _content);
 
-      this.emit('file-saved', _fileNode);
+      this.emit('file:saved', _fileNode);
     } catch (error) {
       this.handleError(error, 'saveFile');
       this.emit('error', {
@@ -118,7 +125,7 @@ export default class FileController extends BaseController {
       const fileSystem = this.getService('fileSystem');
       const newFileNode = await fileSystem.createFile(_parentNode, _fileName, _content);
 
-      this.emit('file-created', newFileNode);
+      this.emit('file:created', newFileNode);
 
       return newFileNode;
     } catch (error) {
@@ -139,28 +146,29 @@ export default class FileController extends BaseController {
     try {
       ValidationUtils.assertNonNull(_fileNode, 'FileNode');
 
-      const confirmed = window.confirm(`"${_fileNode.name}"을(를) 정말 삭제하시겠습니까?`);
-
+      const confirmed = window.confirm(`"${_fileNode.name}"을(를) 삭제하시겠습니까?`);
       if (!confirmed) {
-        return;
+        return false;
       }
 
       const fileSystem = this.getService('fileSystem');
       await fileSystem.deleteFile(_fileNode);
 
-      this.emit('file-deleted', _fileNode);
+      this.emit('file:deleted', _fileNode);
+      return true;
     } catch (error) {
       this.handleError(error, 'deleteFile');
       this.emit('error', {
         message: `파일 삭제 실패: ${_fileNode?.name || '알 수 없는 파일'}`,
         error,
       });
+      return false;
     }
   }
 
   /**
    * 파일 이름 변경
-   * @param {FileNode} _fileNode - 이름을 변경할 파일 노드
+   * @param {FileNode} _fileNode - 변경할 파일 노드
    * @param {string} _newName - 새 이름
    */
   async renameFile(_fileNode, _newName) {
@@ -168,17 +176,13 @@ export default class FileController extends BaseController {
       ValidationUtils.assertNonNull(_fileNode, 'FileNode');
       ValidationUtils.assertNonEmptyString(_newName, 'NewName');
 
-      if (_fileNode.name === _newName) {
-        return;
-      }
-
       const fileSystem = this.getService('fileSystem');
       await fileSystem.renameFile(_fileNode, _newName);
 
-      this.emit('file-renamed', {
+      this.emit('file:renamed', {
         node: _fileNode,
-        oldName: _fileNode.name,
-        newName: _newName,
+        old_name: _fileNode.name,
+        new_name: _newName,
       });
     } catch (error) {
       this.handleError(error, 'renameFile');
@@ -190,20 +194,28 @@ export default class FileController extends BaseController {
   }
 
   /**
-   * 파일 시스템 루트 노드 가져오기
-   * @returns {FileNode|null}
+   * 캐시 무효화
+   * @param {string} _path - 무효화할 경로 (null이면 전체)
    */
-  getRootNode() {
-    const fileSystem = this.getService('fileSystem');
-    return fileSystem.root_node || null;
+  invalidateCache(_path = null) {
+    try {
+      const fileSystem = this.getService('fileSystem');
+      fileSystem.invalidateCache(_path);
+    } catch (error) {
+      this.handleError(error, 'invalidateCache');
+    }
   }
 
   /**
-   * 파일 시스템 사용 가능 여부
-   * @returns {boolean}
+   * 캐시 통계 조회
    */
-  hasFileSystem() {
-    const fileSystem = this.getService('fileSystem');
-    return fileSystem.hasRootHandle();
+  getCacheStatistics() {
+    try {
+      const fileSystem = this.getService('fileSystem');
+      return fileSystem.getCacheStatistics();
+    } catch (error) {
+      this.handleError(error, 'getCacheStatistics');
+      return null;
+    }
   }
 }

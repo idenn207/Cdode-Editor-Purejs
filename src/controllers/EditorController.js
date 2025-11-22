@@ -33,11 +33,11 @@ export default class EditorController extends BaseController {
     const tabController = this.getService('tabController');
 
     // TabController 이벤트 구독
-    tabController.on('document-activated', (_document) => {
+    tabController.on('document:activated', (_document) => {
       this.displayDocument(_document);
     });
 
-    tabController.on('document-closed', (_document) => {
+    tabController.on('document:closed', (_document) => {
       if (this.current_document === _document) {
         this.current_document = null;
         if (this.editor_pane) {
@@ -57,61 +57,70 @@ export default class EditorController extends BaseController {
     this.editor_pane = _editorPane;
     this.registerView('editorPane', _editorPane);
 
-    // EditorPane 이벤트 연결
-    this.editor_pane.on('content-changed', ({ document: _document }) => {
-      this.emit('content-changed', _document);
+    // EditorPane 이벤트 구독
+    _editorPane.on('content:changed', (_event) => {
+      if (this.current_document) {
+        this.current_document.setContent(_event.content);
+      }
     });
 
-    this.editor_pane.on('save-requested', (_document) => {
-      this.saveDocument(_document);
-    });
-
-    this.editor_pane.on('cursor-moved', (_data) => {
-      this.emit('cursor-moved', _data);
+    _editorPane.on('request:save', () => {
+      this.saveCurrentDocument();
     });
   }
 
   /**
-   * Document를 EditorPane에 표시
-   * @param {Document} _document - 표시할 Document
+   * Document 표시
+   * @param {Document} _document
    */
   displayDocument(_document) {
     try {
       ValidationUtils.assertNonNull(_document, 'Document');
 
-      this.current_document = _document;
-
-      if (this.editor_pane) {
-        this.editor_pane.setDocument(_document);
+      if (!this.editor_pane) {
+        throw new Error('EditorPane이 설정되지 않았습니다');
       }
 
-      this.emit('document-displayed', _document);
+      this.current_document = _document;
+      this.editor_pane.setDocument(_document);
+
+      this.emit('document:displayed', _document);
     } catch (error) {
       this.handleError(error, 'displayDocument');
-      this.emit('error', {
-        message: 'Document 표시 실패',
-        error,
-      });
     }
   }
 
   /**
-   * Document를 파일에 저장
-   * @param {Document} _document - 저장할 Document
+   * 현재 Document 저장
+   */
+  async saveCurrentDocument() {
+    if (!this.current_document) {
+      console.warn('저장할 Document가 없습니다');
+      return;
+    }
+
+    await this.saveDocument(this.current_document);
+  }
+
+  /**
+   * Document 저장
+   * @param {Document} _document
    */
   async saveDocument(_document) {
     try {
       ValidationUtils.assertNonNull(_document, 'Document');
 
       const fileSystemService = this.getService('fileSystemService');
-      const content = _document.getText();
 
-      await fileSystemService.writeFile(_document.file_node, content);
+      await fileSystemService.writeFile(_document.file_node, _document.getContent());
 
       _document.markAsSaved();
 
-      this.emit('document-saved', _document);
-      this.emit('status-message', `${_document.file_node.name} 저장됨`);
+      this.emit('document:saved', _document);
+      this.emit('status:message', {
+        message: `"${_document.file_node.name}" 저장됨`,
+        type: 'success',
+      });
     } catch (error) {
       this.handleError(error, 'saveDocument');
       this.emit('error', {
@@ -127,29 +136,49 @@ export default class EditorController extends BaseController {
   async saveAllDocuments() {
     try {
       const tabController = this.getService('tabController');
-      const documents = Array.from(tabController.documents.values());
-      const dirtyDocuments = documents.filter((_doc) => _doc.isDirty());
+      const dirtyDocs = tabController.getDirtyDocuments();
 
-      if (dirtyDocuments.length === 0) {
-        this.emit('status-message', '저장할 파일이 없습니다');
+      if (dirtyDocs.length === 0) {
+        this.emit('status:message', {
+          message: '저장할 파일이 없습니다',
+          type: 'info',
+        });
         return;
       }
 
-      const promises = dirtyDocuments.map((_doc) => this.saveDocument(_doc));
-      await Promise.all(promises);
+      let savedCount = 0;
+      const errors = [];
 
-      this.emit('status-message', `${dirtyDocuments.length}개 파일 저장됨`);
+      for (const doc of dirtyDocs) {
+        try {
+          await this.saveDocument(doc);
+          savedCount++;
+        } catch (error) {
+          errors.push({
+            file: doc.file_node.name,
+            error,
+          });
+        }
+      }
+
+      if (errors.length === 0) {
+        this.emit('status:message', {
+          message: `${savedCount}개 파일 저장 완료`,
+          type: 'success',
+        });
+      } else {
+        this.emit('status:message', {
+          message: `${savedCount}개 파일 저장, ${errors.length}개 실패`,
+          type: 'warning',
+        });
+      }
     } catch (error) {
       this.handleError(error, 'saveAllDocuments');
-      this.emit('error', {
-        message: '일괄 저장 실패',
-        error,
-      });
     }
   }
 
   /**
-   * 현재 활성 Document 반환
+   * 현재 Document 가져오기
    * @returns {Document|null}
    */
   getCurrentDocument() {
@@ -157,7 +186,7 @@ export default class EditorController extends BaseController {
   }
 
   /**
-   * EditorPane 반환
+   * EditorPane 가져오기
    * @returns {EditorPane|null}
    */
   getEditorPane() {
@@ -165,14 +194,10 @@ export default class EditorController extends BaseController {
   }
 
   /**
-   * 컨트롤러 종료
+   * 컨트롤러 파괴
    */
   destroy() {
-    if (this.editor_pane) {
-      this.editor_pane.destroy();
-      this.editor_pane = null;
-    }
-
+    this.editor_pane = null;
     this.current_document = null;
 
     super.destroy();

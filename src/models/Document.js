@@ -1,316 +1,261 @@
 /**
  * 파일: src/models/Document.js
- * 기능: 문서 모델 (리팩토링 버전)
- * 책임: 텍스트 내용, 커서 위치, 선택 영역 관리
- * 변경사항: BaseModel 상속, 이벤트 통일, 직렬화 구현
+ * 기능: 파일의 내용과 상태를 관리하는 모델
+ * 책임:
+ * - 텍스트 내용 저장 및 관리
+ * - Dirty 상태 추적
+ * - 변경 이벤트 발행
  */
 
 import BaseModel from '../core/BaseModel.js';
-import TextUtils from '../utils/TextUtils.js';
 import ValidationUtils from '../utils/ValidationUtils.js';
 
 export default class Document extends BaseModel {
-  constructor(_file_node, _content = '') {
+  constructor(_fileNode, _content = '') {
     super();
 
-    // 검증
-    ValidationUtils.notNullOrUndefined(_file_node, 'FileNode');
+    ValidationUtils.assertNonNull(_fileNode, 'FileNode');
     ValidationUtils.assertString(_content, 'Content');
 
-    // BaseModel의 set 사용
-    this.set('file_node', _file_node);
+    this.file_node = _fileNode;
     this.set('content', _content);
-    this.set('lines', this.#splitLines(_content));
-    this.set('cursor', { line: 0, column: 0 });
-    this.set('selection', null);
+    this.set('is_dirty', false);
     this.set('language', this.#detectLanguage());
 
-    // 초기 상태는 dirty가 아님
-    this.clearDirty();
+    // 하위 호환성을 위한 리스너 배열
+    this.change_listeners = [];
   }
 
   /**
-   * 줄 분할
-   */
-  #splitLines(_text) {
-    return TextUtils.splitLines(_text);
-  }
-
-  /**
-   * 언어 감지
+   * 언어 감지 (private)
    */
   #detectLanguage() {
-    const file_node = this.get('file_node');
-    if (!file_node) return 'plaintext';
-
-    const extension = file_node.getExtension();
-    const language_map = {
+    const ext = this.file_node.getExtension();
+    const EXTENSION_MAP = {
       '.js': 'javascript',
       '.html': 'html',
       '.css': 'css',
       '.md': 'markdown',
+      '.json': 'json',
+      '.txt': 'plaintext',
     };
-
-    return language_map[extension] || 'plaintext';
+    return EXTENSION_MAP[ext] || 'plaintext';
   }
 
   /**
-   * 전체 텍스트 가져오기
+   * 전체 내용 가져오기
+   * @returns {string}
    */
-  getText() {
-    return TextUtils.joinLines(this.get('lines'));
+  getContent() {
+    return this.get('content');
   }
 
   /**
-   * 전체 텍스트 설정
+   * 내용 설정
+   * @param {string} _content
    */
-  setText(_text) {
-    ValidationUtils.assertString(_text, 'Text');
+  setContent(_content) {
+    ValidationUtils.assertString(_content, 'Content');
 
-    this.set('content', _text);
-    this.set('lines', this.#splitLines(_text));
-    this.emit('text-changed', { text: _text });
+    if (this.get('content') !== _content) {
+      this.set('content', _content);
+      this.setDirty(true);
+
+      // 하위 호환성: change_listeners 호출
+      this.change_listeners.forEach((_listener) => {
+        _listener();
+      });
+    }
   }
 
   /**
    * 특정 줄 가져오기
+   * @param {number} _lineNumber
+   * @returns {string}
    */
-  getLine(_line_index) {
-    ValidationUtils.assertInteger(_line_index, 'Line index');
+  getLine(_lineNumber) {
+    ValidationUtils.assertInteger(_lineNumber, 'LineNumber');
+    ValidationUtils.assertState(_lineNumber >= 0, 'Line number must be non-negative');
 
-    const lines = this.get('lines');
-    if (_line_index < 0 || _line_index >= lines.length) {
-      return null;
-    }
-    return lines[_line_index];
+    const lines = this.getLines();
+    return lines[_lineNumber] || '';
   }
 
   /**
-   * 특정 줄 설정
+   * 모든 줄 가져오기
+   * @returns {string[]}
    */
-  setLine(_line_index, _text) {
-    ValidationUtils.assertInteger(_line_index, 'Line index');
-    ValidationUtils.assertString(_text, 'Text');
-
-    const lines = this.get('lines');
-    if (_line_index < 0 || _line_index >= lines.length) {
-      throw new Error(`Line index out of range: ${_line_index}`);
-    }
-
-    lines[_line_index] = _text;
-    this.set('lines', lines);
-    this.emit('line-changed', { line: _line_index, text: _text });
+  getLines() {
+    return this.get('content').split('\n');
   }
 
   /**
-   * 줄 개수
+   * 줄 수 가져오기
+   * @returns {number}
    */
   getLineCount() {
-    return this.get('lines').length;
-  }
-
-  /**
-   * 줄 범위 가져오기
-   */
-  getLineRange(_start_line, _end_line) {
-    ValidationUtils.assertInteger(_start_line, 'Start line');
-    ValidationUtils.assertInteger(_end_line, 'End line');
-
-    const lines = this.get('lines');
-    return lines.slice(_start_line, _end_line + 1);
+    return this.getLines().length;
   }
 
   /**
    * 텍스트 삽입
+   * @param {number} _line
+   * @param {number} _column
+   * @param {string} _text
    */
   insertText(_line, _column, _text) {
     ValidationUtils.assertInteger(_line, 'Line');
     ValidationUtils.assertInteger(_column, 'Column');
     ValidationUtils.assertString(_text, 'Text');
 
-    const lines = this.get('lines');
-    const current_line = lines[_line] || '';
+    const lines = this.getLines();
 
-    const new_text = TextUtils.insert(TextUtils.joinLines(lines), _line, _column, _text);
-
-    this.setText(new_text);
-
-    // 커서 위치 업데이트
-    const insert_lines = TextUtils.splitLines(_text);
-    if (insert_lines.length === 1) {
-      this.setCursor(_line, _column + _text.length);
-    } else {
-      const last_line_length = insert_lines[insert_lines.length - 1].length;
-      this.setCursor(_line + insert_lines.length - 1, last_line_length);
+    if (_line < 0 || _line >= lines.length) {
+      throw new Error(`Line ${_line} out of range`);
     }
 
-    this.emit('text-inserted', {
-      line: _line,
-      column: _column,
-      text: _text,
-    });
+    const line = lines[_line];
+    const before = line.substring(0, _column);
+    const after = line.substring(_column);
+
+    lines[_line] = before + _text + after;
+
+    this.setContent(lines.join('\n'));
   }
 
   /**
    * 텍스트 삭제
+   * @param {number} _line
+   * @param {number} _column
+   * @param {number} _length
    */
-  deleteText(_start_line, _start_col, _end_line, _end_col) {
-    ValidationUtils.assertInteger(_start_line, 'Start line');
-    ValidationUtils.assertInteger(_start_col, 'Start column');
-    ValidationUtils.assertInteger(_end_line, 'End line');
-    ValidationUtils.assertInteger(_end_col, 'End column');
-
-    const lines = this.get('lines');
-    const deleted_text = TextUtils.extractRange(TextUtils.joinLines(lines), _start_line, _start_col, _end_line, _end_col);
-
-    const new_text = TextUtils.delete(TextUtils.joinLines(lines), _start_line, _start_col, _end_line, _end_col);
-
-    this.setText(new_text);
-    this.setCursor(_start_line, _start_col);
-
-    this.emit('text-deleted', {
-      start_line: _start_line,
-      start_col: _start_col,
-      end_line: _end_line,
-      end_col: _end_col,
-      deleted_text: deleted_text,
-    });
-
-    return deleted_text;
-  }
-
-  /**
-   * 커서 위치 가져오기
-   */
-  getCursor() {
-    return { ...this.get('cursor') };
-  }
-
-  /**
-   * 커서 위치 설정
-   */
-  setCursor(_line, _column) {
+  deleteText(_line, _column, _length) {
     ValidationUtils.assertInteger(_line, 'Line');
     ValidationUtils.assertInteger(_column, 'Column');
+    ValidationUtils.assertInteger(_length, 'Length');
 
-    const lines = this.get('lines');
-    const max_line = Math.max(0, lines.length - 1);
-    const clamped_line = Math.max(0, Math.min(_line, max_line));
+    const lines = this.getLines();
 
-    const current_line = lines[clamped_line] || '';
-    const clamped_column = Math.max(0, Math.min(_column, current_line.length));
+    if (_line < 0 || _line >= lines.length) {
+      throw new Error(`Line ${_line} out of range`);
+    }
 
-    const old_cursor = this.get('cursor');
-    const new_cursor = { line: clamped_line, column: clamped_column };
+    const line = lines[_line];
+    const before = line.substring(0, _column);
+    const after = line.substring(_column + _length);
 
-    this.set('cursor', new_cursor);
-    this.emit('cursor-moved', {
-      old_cursor: old_cursor,
-      new_cursor: new_cursor,
-    });
+    lines[_line] = before + after;
+
+    this.setContent(lines.join('\n'));
   }
 
   /**
-   * 선택 영역 가져오기
+   * 범위 삭제
+   * @param {number} _startLine
+   * @param {number} _startColumn
+   * @param {number} _endLine
+   * @param {number} _endColumn
    */
-  getSelection() {
-    const selection = this.get('selection');
-    return selection ? { ...selection } : null;
+  deleteRange(_startLine, _startColumn, _endLine, _endColumn) {
+    ValidationUtils.assertInteger(_startLine, 'StartLine');
+    ValidationUtils.assertInteger(_startColumn, 'StartColumn');
+    ValidationUtils.assertInteger(_endLine, 'EndLine');
+    ValidationUtils.assertInteger(_endColumn, 'EndColumn');
+
+    const lines = this.getLines();
+
+    if (_startLine === _endLine) {
+      // 같은 줄 내에서 삭제
+      this.deleteText(_startLine, _startColumn, _endColumn - _startColumn);
+    } else {
+      // 여러 줄에 걸쳐 삭제
+      const startLine = lines[_startLine].substring(0, _startColumn);
+      const endLine = lines[_endLine].substring(_endColumn);
+
+      lines.splice(_startLine, _endLine - _startLine + 1, startLine + endLine);
+
+      this.setContent(lines.join('\n'));
+    }
   }
 
   /**
-   * 선택 영역 설정
+   * Dirty 상태 확인
+   * @returns {boolean}
    */
-  setSelection(_start, _end) {
-    ValidationUtils.assertObject(_start, 'Start');
-    ValidationUtils.assertObject(_end, 'End');
-
-    const selection = {
-      start: { ...start },
-      end: { ...end },
-    };
-
-    this.set('selection', selection);
-    this.emit('selection-changed', { selection });
+  isDirty() {
+    return this.get('is_dirty');
   }
 
   /**
-   * 선택 영역 해제
+   * Dirty 상태 설정
+   * @param {boolean} _dirty
    */
-  clearSelection() {
-    this.set('selection', null);
-    this.emit('selection-cleared');
+  setDirty(_dirty) {
+    ValidationUtils.assertBoolean(_dirty, 'Dirty');
+    this.set('is_dirty', _dirty);
   }
 
   /**
-   * 선택 영역 존재 여부
+   * 저장됨으로 표시
    */
-  hasSelection() {
-    return this.get('selection') !== null;
-  }
-
-  /**
-   * 선택된 텍스트 가져오기
-   */
-  getSelectedText() {
-    const selection = this.getSelection();
-    if (!selection) return '';
-
-    return TextUtils.extractRange(this.getText(), selection.start.line, selection.start.column, selection.end.line, selection.end.column);
-  }
-
-  /**
-   * FileNode 가져오기
-   */
-  getFileNode() {
-    return this.get('file_node');
+  markAsSaved() {
+    this.setDirty(false);
+    this.emit('saved');
   }
 
   /**
    * 언어 가져오기
+   * @returns {string}
    */
   getLanguage() {
     return this.get('language');
   }
 
   /**
+   * FileNode 가져오기
+   * @returns {FileNode}
+   */
+  getFileNode() {
+    return this.file_node;
+  }
+
+  /**
    * 파일 이름 가져오기
+   * @returns {string}
    */
   getFileName() {
-    const file_node = this.getFileNode();
-    return file_node ? file_node.name : 'Untitled';
+    return this.file_node.name;
   }
 
   /**
    * 파일 경로 가져오기
+   * @returns {string}
    */
   getFilePath() {
-    const file_node = this.getFileNode();
-    return file_node ? file_node.path : '';
+    return this.file_node.getPath();
   }
 
   /**
    * 변경 리스너 등록 (하위 호환성)
+   * @param {Function} _listener
    */
   onChange(_listener) {
     ValidationUtils.assertFunction(_listener, 'Listener');
-    this.on('change', _listener);
+    this.change_listeners.push(_listener);
 
-    // 리스너 제거 함수 반환
-    return {
-      remove: () => this.off('change', _listener),
-    };
+    // EventEmitter도 함께 등록
+    this.on('change', _listener);
   }
 
   /**
    * JSON 직렬화
+   * @returns {Object}
    */
   toJSON() {
     return {
       file_path: this.getFilePath(),
-      content: this.getText(),
-      cursor: this.getCursor(),
-      selection: this.getSelection(),
+      file_name: this.getFileName(),
+      content: this.getContent(),
       is_dirty: this.isDirty(),
       language: this.getLanguage(),
     };
@@ -318,76 +263,25 @@ export default class Document extends BaseModel {
 
   /**
    * JSON 역직렬화
+   * @param {Object} _json
+   * @param {FileNode} _fileNode
+   * @returns {Document}
    */
-  fromJSON(_json) {
-    ValidationUtils.assertObject(_json, 'JSON');
+  static fromJSON(_json, _fileNode) {
+    ValidationUtils.assertNonNull(_json, 'JSON');
+    ValidationUtils.assertNonNull(_fileNode, 'FileNode');
 
-    if (_json.content !== undefined) {
-      this.setText(_json.content);
-    }
-
-    if (_json.cursor) {
-      this.setCursor(_json.cursor.line, _json.cursor.column);
-    }
-
-    if (_json.selection) {
-      this.setSelection(_json.selection.start, _json.selection.end);
-    } else {
-      this.clearSelection();
-    }
-
-    if (_json.is_dirty !== undefined) {
-      this.setDirty(_json.is_dirty);
-    }
+    const doc = new Document(_fileNode, _json.content);
+    doc.setDirty(_json.is_dirty || false);
+    return doc;
   }
 
   /**
-   * 검증
+   * 모델 파괴
    */
-  validate() {
-    try {
-      ValidationUtils.notNullOrUndefined(this.get('file_node'), 'FileNode');
-      ValidationUtils.assertArray(this.get('lines'), 'Lines');
-      ValidationUtils.assertObject(this.get('cursor'), 'Cursor');
-
-      const cursor = this.get('cursor');
-      ValidationUtils.assertInteger(cursor.line, 'Cursor line');
-      ValidationUtils.assertInteger(cursor.column, 'Cursor column');
-
-      return true;
-    } catch (error) {
-      console.error('Document validation failed:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 복제
-   */
-  clone() {
-    const cloned = new Document(this.getFileNode(), this.getText());
-    cloned.setCursor(this.getCursor().line, this.getCursor().column);
-
-    const selection = this.getSelection();
-    if (selection) {
-      cloned.setSelection(selection.start, selection.end);
-    }
-
-    cloned.setDirty(this.isDirty());
-
-    return cloned;
-  }
-
-  /**
-   * 통계 정보
-   */
-  getStatistics() {
-    const text = this.getText();
-    return {
-      line_count: this.getLineCount(),
-      character_count: TextUtils.countCharacters(text),
-      word_count: TextUtils.countWords(text),
-      character_count_no_spaces: TextUtils.countCharactersWithoutSpaces(text),
-    };
+  destroy() {
+    this.change_listeners = [];
+    this.file_node = null;
+    super.destroy();
   }
 }

@@ -54,13 +54,13 @@ export default class TabController extends BaseController {
 
       // Document 변경 리스너 등록
       document.onChange(() => {
-        this.emit('document-changed', document);
+        this.emit('document:changed', document);
       });
 
       // Map에 저장
       this.documents.set(path, document);
 
-      this.emit('document-opened', document);
+      this.emit('document:opened', document);
 
       // 자동 활성화
       this.activateDocument(document);
@@ -91,7 +91,7 @@ export default class TabController extends BaseController {
 
       this.active_document = _document;
 
-      this.emit('document-activated', _document);
+      this.emit('document:activated', _document);
     } catch (error) {
       this.handleError(error, 'activateDocument');
     }
@@ -108,31 +108,31 @@ export default class TabController extends BaseController {
 
       // 수정된 내용이 있으면 확인
       if (_document.isDirty()) {
-        const confirmed = window.confirm(`"${_document.file_node.name}"에 저장하지 않은 변경사항이 있습니다. 정말 닫으시겠습니까?`);
-
+        const confirmed = window.confirm(`"${_document.file_node.name}"에 저장하지 않은 변경사항이 있습니다. 닫으시겠습니까?`);
         if (!confirmed) {
           return false;
         }
       }
 
-      const path = _document.file_node.getPath();
-
       // Map에서 제거
+      const path = _document.file_node.getPath();
       this.documents.delete(path);
 
-      // 활성 Document였다면 null로 설정
+      // 활성 Document였다면 null로
       if (this.active_document === _document) {
         this.active_document = null;
 
-        // 다른 Document가 있으면 그것을 활성화
-        const remainingDocs = Array.from(this.documents.values());
-        if (remainingDocs.length > 0) {
-          this.activateDocument(remainingDocs[0]);
+        // 다른 Document가 있으면 활성화
+        if (this.documents.size > 0) {
+          const nextDoc = Array.from(this.documents.values())[0];
+          this.activateDocument(nextDoc);
         }
       }
 
-      this.emit('document-closed', _document);
+      // Document 정리
+      _document.destroy();
 
+      this.emit('document:closed', _document);
       return true;
     } catch (error) {
       this.handleError(error, 'closeDocument');
@@ -142,34 +142,29 @@ export default class TabController extends BaseController {
 
   /**
    * 모든 Document 닫기
-   * @returns {boolean} 모든 Document 닫기 성공 여부
+   * @returns {boolean} 성공 여부
    */
   closeAllDocuments() {
     try {
-      const documents = Array.from(this.documents.values());
-
-      // 수정된 Document가 있는지 확인
-      const dirtyDocs = documents.filter((_doc) => _doc.isDirty());
-
+      // Dirty Document 확인
+      const dirtyDocs = this.getDirtyDocuments();
       if (dirtyDocs.length > 0) {
-        const confirmed = window.confirm(`${dirtyDocs.length}개의 파일에 저장하지 않은 변경사항이 있습니다. 정말 모두 닫으시겠습니까?`);
-
+        const confirmed = window.confirm(`${dirtyDocs.length}개의 파일이 수정되었습니다. 모두 닫으시겠습니까?`);
         if (!confirmed) {
           return false;
         }
       }
 
       // 모든 Document 닫기
-      for (const document of documents) {
-        const path = document.file_node.getPath();
+      const docs = Array.from(this.documents.values());
+      docs.forEach((_doc) => {
+        const path = _doc.file_node.getPath();
         this.documents.delete(path);
-        this.emit('document-closed', document);
-      }
+        _doc.destroy();
+        this.emit('document:closed', _doc);
+      });
 
       this.active_document = null;
-
-      this.emit('all-documents-closed');
-
       return true;
     } catch (error) {
       this.handleError(error, 'closeAllDocuments');
@@ -178,24 +173,7 @@ export default class TabController extends BaseController {
   }
 
   /**
-   * 특정 파일의 Document 찾기
-   * @param {FileNode} _fileNode - 파일 노드
-   * @returns {Document|null}
-   */
-  findDocument(_fileNode) {
-    try {
-      ValidationUtils.assertNonNull(_fileNode, 'FileNode');
-
-      const path = _fileNode.getPath();
-      return this.documents.get(path) || null;
-    } catch (error) {
-      this.handleError(error, 'findDocument');
-      return null;
-    }
-  }
-
-  /**
-   * 현재 활성 Document 반환
+   * 활성 Document 가져오기
    * @returns {Document|null}
    */
   getActiveDocument() {
@@ -203,7 +181,7 @@ export default class TabController extends BaseController {
   }
 
   /**
-   * 모든 Document 반환
+   * 모든 Document 가져오기
    * @returns {Document[]}
    */
   getAllDocuments() {
@@ -211,7 +189,7 @@ export default class TabController extends BaseController {
   }
 
   /**
-   * 수정된 Document 목록 반환
+   * Dirty Document 가져오기
    * @returns {Document[]}
    */
   getDirtyDocuments() {
@@ -219,7 +197,7 @@ export default class TabController extends BaseController {
   }
 
   /**
-   * 열린 Document 개수
+   * Document 개수 가져오기
    * @returns {number}
    */
   getDocumentCount() {
@@ -227,30 +205,33 @@ export default class TabController extends BaseController {
   }
 
   /**
-   * Document가 열려있는지 확인
-   * @param {FileNode} _fileNode - 파일 노드
+   * Document 존재 여부
+   * @param {FileNode} _fileNode
    * @returns {boolean}
    */
   hasDocument(_fileNode) {
-    try {
-      ValidationUtils.assertNonNull(_fileNode, 'FileNode');
-
-      const path = _fileNode.getPath();
-      return this.documents.has(path);
-    } catch (error) {
-      return false;
-    }
+    ValidationUtils.assertNonNull(_fileNode, 'FileNode');
+    return this.documents.has(_fileNode.getPath());
   }
 
   /**
-   * 컨트롤러 종료
+   * FileNode로 Document 찾기
+   * @param {FileNode} _fileNode
+   * @returns {Document|null}
+   */
+  findDocumentByFileNode(_fileNode) {
+    ValidationUtils.assertNonNull(_fileNode, 'FileNode');
+    return this.documents.get(_fileNode.getPath()) || null;
+  }
+
+  /**
+   * 컨트롤러 파괴
    */
   destroy() {
-    // 모든 Document 강제 닫기
-    for (const document of this.documents.values()) {
-      this.emit('document-closed', document);
-    }
-
+    // 모든 Document 정리
+    this.documents.forEach((_doc) => {
+      _doc.destroy();
+    });
     this.documents.clear();
     this.active_document = null;
 
