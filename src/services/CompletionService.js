@@ -556,6 +556,7 @@ export default class CompletionService {
         'class',
         'const',
         'continue',
+        'constructor',
         'debugger',
         'default',
         'delete',

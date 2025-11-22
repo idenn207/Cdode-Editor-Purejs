@@ -1,6 +1,8 @@
 /**
  * 파일: src/views/components/EditorPane.js
- * 수정: 자동 들여쓰기, 괄호 닫기, 실시간 업데이트
+ * 기능: 코드 에디터 UI 컴포넌트
+ * 책임: Document 모델 기반 텍스트 편집, 렌더링, 사용자 입력 처리
+ * 수정: Document 메서드를 사용한 텍스트 편집으로 완전히 리팩토링
  */
 
 import EventEmitter from '../../utils/EventEmitter.js';
@@ -33,6 +35,9 @@ export default class EditorPane extends EventEmitter {
     // 실시간 렌더링
     this.render_debounce_timeout = null;
 
+    // 프로그래밍 방식 업데이트 중 (input 이벤트 무시용)
+    this.is_programmatic_change = false;
+
     this.#initialize();
   }
 
@@ -62,15 +67,15 @@ export default class EditorPane extends EventEmitter {
     // compositionend (한글 입력 완료)
     this.content_el.addEventListener('compositionend', () => {
       this.is_composing = false;
-      this.#updateDocumentImmediate();
+      this.#syncDOMToDocument();
       this.checkCompletionTrigger();
     });
 
     // input 이벤트
     this.content_el.addEventListener('input', (_e) => {
-      if (this.is_composing) return;
+      if (this.is_composing || this.is_programmatic_change) return;
 
-      this.#updateDocumentImmediate();
+      this.#syncDOMToDocument();
       this.checkCompletionTrigger();
     });
 
@@ -86,11 +91,13 @@ export default class EditorPane extends EventEmitter {
 
     // 커서 이동 시
     this.content_el.addEventListener('click', () => {
+      this.#syncCursorToDocument();
       this.#updateActiveLine();
       this.#checkHideCompletion();
     });
 
     this.content_el.addEventListener('keyup', (_e) => {
+      this.#syncCursorToDocument();
       this.#updateActiveLine();
       this.#handleSelectionChange();
 
@@ -105,19 +112,21 @@ export default class EditorPane extends EventEmitter {
     });
 
     this.content_el.addEventListener('mouseup', () => {
+      this.#syncCursorToDocument();
       this.#handleSelectionChange();
     });
   }
 
   /**
-   * 자동완성 패널 숨김 체크 - 새로 추가
+   * 자동완성 패널 숨김 체크 - Document 커서 사용
    */
   #checkHideCompletion() {
-    if (!this.completion_panel_visible) return;
+    if (!this.completion_panel_visible || !this.document) return;
 
-    const cursorPos = this.getCursorPosition();
-    if (!cursorPos) return;
+    // Document 커서 동기화
+    this.#syncCursorToDocument();
 
+    const cursorPos = this.document.cursor;
     const currentLine = this.document.getLine(cursorPos.line);
     if (!currentLine) return;
 
@@ -132,9 +141,10 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * Document 즉시 업데이트
+   * DOM → Document 동기화
+   * DOM의 내용을 Document 모델로 동기화
    */
-  #updateDocumentImmediate() {
+  #syncDOMToDocument() {
     if (!this.document) return;
 
     const text = this.#extractText();
@@ -142,29 +152,103 @@ export default class EditorPane extends EventEmitter {
 
     if (text === currentText) return;
 
+    // Document의 lines 배열 직접 업데이트
     this.document.content = text;
     this.document.lines = text.split('\n');
+    this.document.is_dirty = true;
 
-    if (!this.document.is_dirty) {
-      this.document.is_dirty = true;
-      this.emit('content-changed', {
-        document: this.document,
-        text: text,
-      });
-    }
+    // 변경 이벤트 발생
+    this.emit('content-changed', {
+      _document: this.document,
+      _text: text,
+    });
   }
 
   /**
-   * 자동완성 트리거 체크
+   * 커서 위치 → Document 동기화
    */
-  checkCompletionTrigger() {
+  #syncCursorToDocument() {
     if (!this.document) return;
 
     const cursorPos = this.getCursorPosition();
     if (!cursorPos) return;
 
+    this.document.moveCursor(cursorPos.line, cursorPos.column);
+  }
+
+  /**
+   * 선택 영역 → Document 동기화
+   */
+  #syncSelectionToDocument() {
+    if (!this.document) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      this.document.clearSelection();
+      return;
+    }
+
+    if (selection.isCollapsed) {
+      this.document.clearSelection();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const startPos = this.#getPositionFromNode(range.startContainer, range.startOffset);
+    const endPos = this.#getPositionFromNode(range.endContainer, range.endOffset);
+
+    if (startPos && endPos) {
+      this.document.setSelection(startPos.line, startPos.column, endPos.line, endPos.column);
+    }
+  }
+
+  /**
+   * DOM 노드에서 Document 위치 계산
+   */
+  #getPositionFromNode(_node, _offset) {
+    let node = _node;
+
+    // .code-line 요소 찾기
+    while (node && node !== this.content_el) {
+      if (node.parentNode === this.content_el && node.classList?.contains('code-line')) {
+        break;
+      }
+      node = node.parentNode;
+    }
+
+    if (!node || !node.classList?.contains('code-line')) {
+      return null;
+    }
+
+    const lineElements = Array.from(this.content_el.querySelectorAll('.code-line'));
+    const lineIndex = lineElements.indexOf(node);
+
+    if (lineIndex === -1) return null;
+
+    const preRange = document.createRange();
+    preRange.selectNodeContents(node);
+    preRange.setEnd(_node, _offset);
+    const column = preRange.toString().length;
+
+    return { line: lineIndex, column: column };
+  }
+
+  /**
+   * 자동완성 트리거 체크 - Document 커서 사용
+   */
+  checkCompletionTrigger() {
+    if (!this.document) return;
+
+    // Document의 커서 위치 동기화
+    this.#syncCursorToDocument();
+
+    const cursorPos = this.document.cursor;
     const currentLine = this.document.getLine(cursorPos.line);
-    // if (!currentLine) return;
+
+    if (!currentLine) {
+      this.emit('completion-cancel');
+      return;
+    }
 
     const beforeCursor = currentLine.substring(0, cursorPos.column);
 
@@ -238,20 +322,23 @@ export default class EditorPane extends EventEmitter {
     // Enter 키 처리 (들여쓰기 + 괄호)
     if (_e.key === 'Enter' && !this.completion_panel_visible) {
       _e.preventDefault();
+      this.#syncCursorToDocument();
       this.#handleEnterKey();
       return;
     }
 
-    // Tab 키 처리
+    // Tab 키 처리 - Document 메서드 사용
     if (_e.key === 'Tab' && !this.completion_panel_visible) {
       _e.preventDefault();
-      window.document.execCommand('insertText', false, '  ');
+      this.#syncCursorToDocument();
+      this.#insertTextAtCursor('  ');
       return;
     }
 
     // 자동 따옴표 닫기
     if (['"', "'", '`'].includes(_e.key) && !this.completion_panel_visible) {
       _e.preventDefault();
+      this.#syncCursorToDocument();
       if (this.#shouldSkipClosingQuote(_e.key)) {
         this.#skipClosingQuote();
         return;
@@ -263,12 +350,14 @@ export default class EditorPane extends EventEmitter {
     // 자동 괄호 닫기
     if (['(', '{', '['].includes(_e.key) && !this.completion_panel_visible) {
       _e.preventDefault();
+      this.#syncCursorToDocument();
       this.#handleAutoCloseBracket(_e.key);
       return;
     }
 
     // 닫는 괄호 입력 시 건너뛰기
     if ([')', '}', ']'].includes(_e.key) && !this.completion_panel_visible) {
+      this.#syncCursorToDocument();
       if (this.#shouldSkipClosingBracket(_e.key)) {
         _e.preventDefault();
         this.#skipClosingBracket();
@@ -278,18 +367,17 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * Enter 키 처리 - 새로 추가
+   * Enter 키 처리 - Document 메서드 사용
    */
   #handleEnterKey() {
-    const cursorPos = this.getCursorPosition();
-    if (!cursorPos) {
-      window.document.execCommand('insertText', false, '\n');
-      return;
-    }
+    if (!this.document) return;
 
+    // Document에서 커서 위치 가져오기
+    const cursorPos = this.document.cursor;
     const currentLine = this.document.getLine(cursorPos.line);
-    if (!currentLine) {
-      window.document.execCommand('insertText', false, '\n');
+
+    if (currentLine === null || currentLine === undefined) {
+      this.#insertTextAtCursor('\n');
       return;
     }
 
@@ -313,28 +401,14 @@ export default class EditorPane extends EventEmitter {
     if (isBetweenBrackets) {
       // 괄호 사이: 두 줄 추가 + 추가 들여쓰기
       const newIndent = currentIndent + '  ';
+      const textToInsert = '\n' + newIndent + '\n' + currentIndent;
 
-      // 현재 커서 위치의 라인 인덱스 저장
-      const currentLineIndex = cursorPos.line;
+      this.#insertTextAtCursor(textToInsert);
 
-      // 첫 번째 줄만 삽입 (중간 줄)
-      window.document.execCommand('insertText', false, '\n' + newIndent);
-
-      // Document 즉시 업데이트
-      this.#updateDocumentImmediate();
-
-      // 중간 줄에 커서 배치 후 마지막 줄 삽입
+      // 중간 줄로 커서 이동 (새 들여쓰기 끝)
       setTimeout(() => {
-        // 두 번째 줄 삽입 (닫는 괄호 줄)
-        window.document.execCommand('insertText', false, '\n' + currentIndent);
-
-        // Document 업데이트
-        this.#updateDocumentImmediate();
-
-        // 중간 줄로 커서 이동
-        setTimeout(() => {
-          this.#setCursorToLine(currentLineIndex + 1, newIndent.length);
-        }, 0);
+        this.document.moveCursor(cursorPos.line + 1, newIndent.length);
+        this.#syncCursorFromDocument();
       }, 0);
 
       return;
@@ -343,49 +417,139 @@ export default class EditorPane extends EventEmitter {
     // 괄호 열기 직후 Enter
     if (beforeTrimmed.endsWith('{') || beforeTrimmed.endsWith('(') || beforeTrimmed.endsWith('[')) {
       const newIndent = currentIndent + '  ';
-      window.document.execCommand('insertText', false, '\n' + newIndent);
+      this.#insertTextAtCursor('\n' + newIndent);
       return;
     }
 
     // 일반 Enter: 현재 들여쓰기 유지
-    window.document.execCommand('insertText', false, '\n' + currentIndent);
+    this.#insertTextAtCursor('\n' + currentIndent);
   }
 
   /**
-   * 자동 따옴표 닫기
+   * 커서 위치에 텍스트 삽입 (Document 메서드 사용)
+   */
+  #insertTextAtCursor(_text) {
+    if (!this.document) return;
+    const cursor = this.document.cursor;
+    this.document.insertText(cursor.line, cursor.column, _text);
+
+    // Document → DOM 동기화
+    this.#render();
+
+    // 커서 위치 DOM에 반영
+    this.#syncCursorFromDocument();
+  }
+
+  /**
+   * Document 커서 → DOM 동기화
+   */
+  #syncCursorFromDocument() {
+    if (!this.document) return;
+
+    const cursor = this.document.cursor;
+    this.#setDOMCursor(cursor.line, cursor.column);
+  }
+
+  /**
+   * DOM 커서 설정
+   */
+  #setDOMCursor(_line, _column) {
+    try {
+      const codeLines = this.content_el.querySelectorAll('.code-line');
+      if (_line < 0 || _line >= codeLines.length) return;
+
+      const targetLine = codeLines[_line];
+      if (!targetLine) return;
+
+      // 모든 텍스트 노드를 찾아서 위치 계산
+      const textNodes = [];
+      const collectTextNodes = (_node) => {
+        if (_node.nodeType === Node.TEXT_NODE) {
+          textNodes.push(_node);
+        } else if (_node.nodeType === Node.ELEMENT_NODE) {
+          for (let child of _node.childNodes) {
+            collectTextNodes(child);
+          }
+        }
+      };
+      collectTextNodes(targetLine);
+
+      // 텍스트 노드가 없으면 생성
+      if (textNodes.length === 0) {
+        const textNode = window.document.createTextNode('');
+        targetLine.appendChild(textNode);
+        textNodes.push(textNode);
+      }
+
+      // 컬럼 위치에 맞는 텍스트 노드 찾기
+      let currentOffset = 0;
+      let targetNode = textNodes[0];
+      let nodeOffset = 0;
+
+      for (const node of textNodes) {
+        const nodeLength = node.textContent.length;
+        if (currentOffset + nodeLength >= _column) {
+          targetNode = node;
+          nodeOffset = _column - currentOffset;
+          break;
+        }
+        currentOffset += nodeLength;
+      }
+
+      // 마지막 노드를 넘어가면 마지막 노드의 끝으로 설정
+      if (currentOffset < _column) {
+        targetNode = textNodes[textNodes.length - 1];
+        nodeOffset = targetNode.textContent.length;
+      }
+
+      // 커서 위치 설정
+      const range = window.document.createRange();
+      const selection = window.getSelection();
+
+      const safeOffset = Math.min(nodeOffset, targetNode.textContent.length);
+      range.setStart(targetNode, safeOffset);
+      range.setEnd(targetNode, safeOffset);
+
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      // 활성 라인 업데이트
+      this.#updateActiveLine();
+    } catch (e) {
+      console.error('Error setting DOM cursor:', e);
+    }
+  }
+
+  /**
+   * 자동 따옴표 닫기 - Document 메서드 사용
    */
   #handleAutoCloseQuote(_openQuote) {
-    const closeQuote = { '"': '"', "'": "'", '`': '`' }[_openQuote];
+    if (!this.document) return;
 
-    const cursorPos = this.getCursorPosition();
-    if (!cursorPos) {
-      window.document.execCommand('insertText', false, _openQuote);
+    const closeQuote = { '"': '"', "'": "'", '`': '`' }[_openQuote];
+    const cursorPos = this.document.cursor;
+    const currentLine = this.document.getLine(cursorPos.line);
+
+    if (currentLine === null || currentLine === undefined) {
+      this.#insertTextAtCursor(_openQuote);
       return;
     }
 
-    const currentLine = this.document.getLine(cursorPos.line);
     const afterCursor = currentLine.substring(cursorPos.column);
 
     // 다음 문자가 따옴표나 공백이면 자동 닫기
     if (!afterCursor || /^[\s"'`]/.test(afterCursor)) {
-      const selection = window.getSelection();
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
+      const textToInsert = _openQuote + closeQuote;
+      this.document.insertText(cursorPos.line, cursorPos.column, textToInsert);
 
-        // 열기 + 닫기 괄호 삽입
-        const textNode = window.document.createTextNode(_openQuote + closeQuote);
-        range.insertNode(textNode);
+      // Document → DOM 동기화
+      this.#render();
 
-        // 커서를 괄호 사이로 이동
-        range.setStart(textNode, 1);
-        range.setEnd(textNode, 1);
-        selection.removeAllRanges();
-        selection.addRange(range);
-
-        this.#updateDocumentImmediate();
-      }
+      // 커서를 따옴표 사이로 이동
+      this.document.moveCursor(cursorPos.line, cursorPos.column + 1);
+      this.#syncCursorFromDocument();
     } else {
-      window.document.execCommand('insertText', false, _openQuote);
+      this.#insertTextAtCursor(_openQuote);
     }
   }
 
@@ -393,11 +557,11 @@ export default class EditorPane extends EventEmitter {
    * 닫는 따옴표 건너뛰기 체크
    */
   #shouldSkipClosingQuote(_closeQuote) {
-    const cursorPos = this.getCursorPosition();
-    if (!cursorPos) return false;
+    if (!this.document) return false;
 
+    const cursorPos = this.document.cursor;
     const currentLine = this.document.getLine(cursorPos.line);
-    if (!currentLine) return false;
+    if (currentLine === null || currentLine === undefined) return false;
 
     const afterCursor = currentLine.substring(cursorPos.column);
 
@@ -406,62 +570,46 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 닫는 따옴표 건너뛰기
+   * 닫는 따옴표 건너뛰기 - Document 메서드 사용
    */
   #skipClosingQuote() {
-    const selection = window.getSelection();
-    if (selection.rangeCount === 0) return;
+    if (!this.document) return;
 
-    const range = selection.getRangeAt(0);
-
-    // 한 문자 앞으로 이동
-    const textNode = range.startContainer;
-    if (textNode.nodeType === Node.TEXT_NODE) {
-      const newOffset = range.startOffset + 1;
-      if (newOffset <= textNode.length) {
-        range.setStart(textNode, newOffset);
-        range.setEnd(textNode, newOffset);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-    }
+    const cursorPos = this.document.cursor;
+    this.document.moveCursor(cursorPos.line, cursorPos.column + 1);
+    this.#syncCursorFromDocument();
   }
 
   /**
-   * 자동 괄호 닫기
+   * 자동 괄호 닫기 - Document 메서드 사용
    */
   #handleAutoCloseBracket(_openBracket) {
-    const closeBracket = { '(': ')', '{': '}', '[': ']' }[_openBracket];
+    if (!this.document) return;
 
-    const cursorPos = this.getCursorPosition();
-    if (!cursorPos) {
-      window.document.execCommand('insertText', false, _openBracket);
+    const closeBracket = { '(': ')', '{': '}', '[': ']' }[_openBracket];
+    const cursorPos = this.document.cursor;
+    const currentLine = this.document.getLine(cursorPos.line);
+
+    if (currentLine === null || currentLine === undefined) {
+      this.#insertTextAtCursor(_openBracket);
       return;
     }
 
-    const currentLine = this.document.getLine(cursorPos.line);
     const afterCursor = currentLine.substring(cursorPos.column);
 
     // 다음 문자가 닫는 괄호나 공백이면 자동 닫기
     if (!afterCursor || /^[\s\)\}\]]/.test(afterCursor)) {
-      const selection = window.getSelection();
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
+      const textToInsert = _openBracket + closeBracket;
+      this.document.insertText(cursorPos.line, cursorPos.column, textToInsert);
 
-        // 열기 + 닫기 괄호 삽입
-        const textNode = window.document.createTextNode(_openBracket + closeBracket);
-        range.insertNode(textNode);
+      // Document → DOM 동기화
+      this.#render();
 
-        // 커서를 괄호 사이로 이동
-        range.setStart(textNode, 1);
-        range.setEnd(textNode, 1);
-        selection.removeAllRanges();
-        selection.addRange(range);
-
-        this.#updateDocumentImmediate();
-      }
+      // 커서를 괄호 사이로 이동
+      this.document.moveCursor(cursorPos.line, cursorPos.column + 1);
+      this.#syncCursorFromDocument();
     } else {
-      window.document.execCommand('insertText', false, _openBracket);
+      this.#insertTextAtCursor(_openBracket);
     }
   }
 
@@ -469,11 +617,11 @@ export default class EditorPane extends EventEmitter {
    * 닫는 괄호 건너뛰기 체크
    */
   #shouldSkipClosingBracket(_closeBracket) {
-    const cursorPos = this.getCursorPosition();
-    if (!cursorPos) return false;
+    if (!this.document) return false;
 
+    const cursorPos = this.document.cursor;
     const currentLine = this.document.getLine(cursorPos.line);
-    if (!currentLine) return false;
+    if (currentLine === null || currentLine === undefined) return false;
 
     const afterCursor = currentLine.substring(cursorPos.column);
 
@@ -482,35 +630,25 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 닫는 괄호 건너뛰기
+   * 닫는 괄호 건너뛰기 - Document 메서드 사용
    */
   #skipClosingBracket() {
-    const selection = window.getSelection();
-    if (selection.rangeCount === 0) return;
+    if (!this.document) return;
 
-    const range = selection.getRangeAt(0);
-
-    // 한 문자 앞으로 이동
-    const textNode = range.startContainer;
-    if (textNode.nodeType === Node.TEXT_NODE) {
-      const newOffset = range.startOffset + 1;
-      if (newOffset <= textNode.length) {
-        range.setStart(textNode, newOffset);
-        range.setEnd(textNode, newOffset);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-    }
+    const cursorPos = this.document.cursor;
+    this.document.moveCursor(cursorPos.line, cursorPos.column + 1);
+    this.#syncCursorFromDocument();
   }
 
   /**
-   * 붙여넣기 처리
+   * 붙여넣기 처리 - Document 메서드 사용
    */
   #handlePaste(_e) {
     _e.preventDefault();
     const text = _e.clipboardData.getData('text/plain');
     if (!text) return;
-    window.document.execCommand('insertText', false, text);
+
+    this.#insertTextAtCursor(text);
   }
 
   /**
@@ -518,8 +656,13 @@ export default class EditorPane extends EventEmitter {
    */
   #handleSelectionChange() {
     if (!this.document) return;
+
+    // Document에 선택 영역 동기화
+    this.#syncSelectionToDocument();
+
     const selection = window.getSelection();
     if (selection.rangeCount === 0) return;
+
     this.emit('cursor-moved', {
       hasSelection: !selection.isCollapsed,
     });
@@ -598,6 +741,7 @@ export default class EditorPane extends EventEmitter {
     if (!this.document) return;
 
     this.is_rendering = true;
+    this.is_programmatic_change = true;
 
     if (this.use_virtual_scrolling) {
       this.#renderWithVirtualScrolling();
@@ -606,6 +750,11 @@ export default class EditorPane extends EventEmitter {
     }
 
     this.is_rendering = false;
+
+    // 다음 이벤트 루프에서 플래그 리셋
+    setTimeout(() => {
+      this.is_programmatic_change = false;
+    }, 0);
   }
 
   /**
@@ -682,9 +831,7 @@ export default class EditorPane extends EventEmitter {
     this.content_el.innerHTML = html;
     this.content_el.contentEditable = 'true';
 
-    // setTimeout(() => {
     this.#updateActiveLine();
-    // }, 0);
   }
 
   /**
@@ -758,14 +905,12 @@ export default class EditorPane extends EventEmitter {
   }
 
   /**
-   * 자동완성 삽입
+   * 자동완성 삽입 - Document 메서드 사용
    */
   insertCompletion(_completion) {
     if (!this.document) return;
 
-    const cursorPos = this.getCursorPosition();
-    if (!cursorPos) return;
-
+    const cursorPos = this.document.cursor;
     const currentLine = this.document.getLine(cursorPos.line);
     if (!currentLine) return;
 
@@ -777,87 +922,32 @@ export default class EditorPane extends EventEmitter {
     const prefixMatch = beforeCursor.match(/[a-zA-Z_$][a-zA-Z0-9_$]*$/);
 
     let prefix = '';
+    let prefixStartCol = cursorPos.column;
+
     if (thisMatch) {
       prefix = thisMatch[1];
+      prefixStartCol = cursorPos.column - prefix.length;
     } else if (objMatch) {
       prefix = objMatch[1];
+      prefixStartCol = cursorPos.column - prefix.length;
     } else if (prefixMatch) {
       prefix = prefixMatch[0];
+      prefixStartCol = cursorPos.column - prefix.length;
     }
 
-    // Selection API로 직접 삽입
-    const selection = window.getSelection();
-    if (selection.rangeCount === 0) return;
-
-    const range = selection.getRangeAt(0);
-
-    // 접두사 삭제
+    // 접두사 삭제 후 새 텍스트 삽입
     if (prefix.length > 0) {
-      range.setStart(range.startContainer, range.startOffset - prefix.length);
-      range.deleteContents();
+      this.document.deleteText(cursorPos.line, prefixStartCol, cursorPos.line, cursorPos.column);
+      this.document.insertText(cursorPos.line, prefixStartCol, _completion.insertText);
+    } else {
+      this.document.insertText(cursorPos.line, cursorPos.column, _completion.insertText);
     }
 
-    // 새 텍스트 삽입
-    const textNode = window.document.createTextNode(_completion.insertText);
-    range.insertNode(textNode);
+    // Document → DOM 동기화
+    this.#render();
 
     // 커서를 삽입된 텍스트 끝으로 이동
-    range.setStartAfter(textNode);
-    range.setEndAfter(textNode);
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    // Document 업데이트
-    this.#updateDocumentImmediate();
-  }
-
-  /**
-   * 특정 라인의 특정 컬럼 위치에 커서 배치
-   */
-  #setCursorToLine(_lineIndex, _column) {
-    try {
-      const codeLines = this.content_el.querySelectorAll('.code-line');
-      if (_lineIndex < 0 || _lineIndex >= codeLines.length) return;
-
-      const targetLine = codeLines[_lineIndex];
-      if (!targetLine) return;
-
-      // 라인 내의 텍스트 노드 찾기
-      const findTextNode = (_node) => {
-        if (_node.nodeType === Node.TEXT_NODE) {
-          return _node;
-        }
-        for (let child of _node.childNodes) {
-          const textNode = findTextNode(child);
-          if (textNode) return textNode;
-        }
-        return null;
-      };
-
-      let textNode = findTextNode(targetLine);
-
-      // 텍스트 노드가 없으면 생성
-      if (!textNode) {
-        textNode = window.document.createTextNode('');
-        targetLine.appendChild(textNode);
-      }
-
-      // 커서 위치 설정
-      const range = window.document.createRange();
-      const selection = window.getSelection();
-
-      const offset = Math.min(_column, textNode.length);
-      range.setStart(textNode, offset);
-      range.setEnd(textNode, offset);
-
-      selection.removeAllRanges();
-      selection.addRange(range);
-
-      // 활성 라인 업데이트
-      this.#updateActiveLine();
-    } catch (e) {
-      console.error('Error setting cursor position:', e);
-    }
+    this.#syncCursorFromDocument();
   }
 
   getCursorPosition() {
