@@ -73,7 +73,6 @@ export default class EditorPane extends EventEmitter {
 
     // input 이벤트
     this.content_el.addEventListener('input', (_e) => {
-      console.log(1);
       if (this.is_composing || this.is_programmatic_change) return;
 
       this.#syncDOMToDocument();
@@ -330,7 +329,8 @@ export default class EditorPane extends EventEmitter {
     if (_e.key === 'Tab' && !this.completion_panel_visible) {
       _e.preventDefault();
       this.#syncCursorToDocument();
-      this.#insertTextAtCursor('  ');
+      window.document.execCommand('insertText', false, '  ');
+      // this.#insertTextAtCursor('  ');
       return;
     }
 

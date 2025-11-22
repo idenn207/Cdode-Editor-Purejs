@@ -70,7 +70,6 @@ export default class Document {
       };
     }
     this.content = this.lines.join('\n');
-    window.document.execCommand('insertText', false, _text);
 
     this.is_dirty = true;
     this.#notifyChange();
