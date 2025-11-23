@@ -70,8 +70,12 @@ export default class EditorPane extends EventEmitter {
     this.content_el.addEventListener('input', (_e) => {
       if (this.is_composing) return;
 
+      // Document 모델만 업데이트 (렌더링하지 않음 - undo/redo 보존)
       this.#updateDocumentImmediate();
       this.checkCompletionTrigger();
+
+      // 타이핑이 멈춘 후 렌더링 (디바운스)
+      this.#scheduleDelayedRender();
     });
 
     // 붙여넣기
@@ -102,6 +106,15 @@ export default class EditorPane extends EventEmitter {
 
     this.content_el.addEventListener('focus', () => {
       this.emit('focus');
+    });
+
+    this.content_el.addEventListener('blur', () => {
+      // 포커스를 잃을 때 즉시 렌더링 (syntax highlighting 적용)
+      if (this.render_debounce_timeout) {
+        clearTimeout(this.render_debounce_timeout);
+        this.render_debounce_timeout = null;
+      }
+      this.#performRenderWithCursorRestore();
     });
 
     this.content_el.addEventListener('mouseup', () => {
@@ -151,6 +164,138 @@ export default class EditorPane extends EventEmitter {
         document: this.document,
         text: text,
       });
+    }
+  }
+
+  /**
+   * 타이핑 멈춤 후 지연 렌더링 스케줄 (undo/redo 보존)
+   */
+  #scheduleDelayedRender() {
+    // 기존 타이머 취소
+    if (this.render_debounce_timeout) {
+      clearTimeout(this.render_debounce_timeout);
+    }
+
+    // 500ms 후에 렌더링 (타이핑이 멈춘 후)
+    this.render_debounce_timeout = setTimeout(() => {
+      this.#performRenderWithCursorRestore();
+      this.render_debounce_timeout = null;
+    }, 500);
+  }
+
+  /**
+   * Document 업데이트 후 즉시 렌더링 (커서 위치 보존)
+   */
+  #updateDocumentAndRender() {
+    if (!this.document) return;
+
+    // Document 업데이트만 수행
+    this.#updateDocumentImmediate();
+
+    // 렌더링은 다음 프레임에 디바운스하여 실행
+    if (this.render_debounce_timeout) {
+      clearTimeout(this.render_debounce_timeout);
+    }
+
+    this.render_debounce_timeout = setTimeout(() => {
+      this.#performRenderWithCursorRestore();
+      this.render_debounce_timeout = null;
+    }, 0);
+  }
+
+  /**
+   * 커서 위치를 보존하며 렌더링 수행
+   */
+  #performRenderWithCursorRestore() {
+    if (!this.document) return;
+
+    // 현재 커서 위치 저장
+    const cursorPos = this.getCursorPosition();
+
+    // 렌더링
+    this.is_rendering = true;
+    // this.#renderAllLines();
+    this.is_rendering = false;
+
+    // 커서 위치 복원
+    if (cursorPos) {
+      requestAnimationFrame(() => {
+        this.#restoreCursorPosition(cursorPos);
+      });
+    }
+  }
+
+  /**
+   * 커서 위치 복원
+   */
+  #restoreCursorPosition(_cursorPos) {
+    try {
+      const codeLines = this.content_el.querySelectorAll('.code-line');
+      if (_cursorPos.line < 0 || _cursorPos.line >= codeLines.length) return;
+
+      const targetLine = codeLines[_cursorPos.line];
+      if (!targetLine) return;
+
+      // 라인 내의 모든 텍스트 노드와 위치를 수집
+      const textNodes = [];
+      const collectTextNodes = (_node) => {
+        if (_node.nodeType === Node.TEXT_NODE) {
+          textNodes.push(_node);
+        } else if (_node.nodeType === Node.ELEMENT_NODE) {
+          for (let child of _node.childNodes) {
+            collectTextNodes(child);
+          }
+        }
+      };
+      collectTextNodes(targetLine);
+
+      // 목표 컬럼 위치 찾기
+      let currentOffset = 0;
+      let targetNode = null;
+      let targetOffset = 0;
+
+      for (let textNode of textNodes) {
+        const nodeLength = textNode.textContent.length;
+        if (currentOffset + nodeLength >= _cursorPos.column) {
+          targetNode = textNode;
+          targetOffset = _cursorPos.column - currentOffset;
+          break;
+        }
+        currentOffset += nodeLength;
+      }
+
+      // 텍스트 노드가 없거나 위치를 찾지 못한 경우
+      if (!targetNode && textNodes.length > 0) {
+        targetNode = textNodes[textNodes.length - 1];
+        targetOffset = targetNode.textContent.length;
+      } else if (!targetNode) {
+        // 텍스트 노드가 전혀 없는 경우 - 빈 텍스트 노드를 첫 번째 자식으로 삽입
+        const firstChild = targetLine.firstChild;
+        targetNode = document.createTextNode('');
+
+        if (firstChild) {
+          targetLine.insertBefore(targetNode, firstChild);
+        } else {
+          targetLine.appendChild(targetNode);
+        }
+        targetOffset = 0;
+      }
+
+      // 커서 설정
+      const range = document.createRange();
+      const selection = window.getSelection();
+
+      const safeOffset = Math.min(targetOffset, targetNode.textContent.length);
+      range.setStart(targetNode, safeOffset);
+      range.setEnd(targetNode, safeOffset);
+
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      // 활성 라인 업데이트
+      this.#updateActiveLine();
+    } catch (e) {
+      console.error('Error restoring cursor position:', e);
     }
   }
 
@@ -246,6 +391,7 @@ export default class EditorPane extends EventEmitter {
     if (_e.key === 'Tab' && !this.completion_panel_visible) {
       _e.preventDefault();
       window.document.execCommand('insertText', false, '  ');
+      // execCommand는 자동으로 input 이벤트를 발생시키므로 별도 렌더링 불필요
       return;
     }
 
@@ -284,12 +430,14 @@ export default class EditorPane extends EventEmitter {
     const cursorPos = this.getCursorPosition();
     if (!cursorPos) {
       window.document.execCommand('insertText', false, '\n');
+      // execCommand는 자동으로 input 이벤트를 발생시킴
       return;
     }
 
     const currentLine = this.document.getLine(cursorPos.line);
     if (!currentLine) {
       window.document.execCommand('insertText', false, '\n');
+      // execCommand는 자동으로 input 이벤트를 발생시킴
       return;
     }
 
@@ -320,22 +468,14 @@ export default class EditorPane extends EventEmitter {
       // 첫 번째 줄만 삽입 (중간 줄)
       window.document.execCommand('insertText', false, '\n' + newIndent);
 
-      // Document 즉시 업데이트
-      this.#updateDocumentImmediate();
-
       // 중간 줄에 커서 배치 후 마지막 줄 삽입
-      setTimeout(() => {
-        // 두 번째 줄 삽입 (닫는 괄호 줄)
-        window.document.execCommand('insertText', false, '\n' + currentIndent);
+      // 두 번째 줄 삽입 (닫는 괄호 줄)
+      window.document.execCommand('insertText', false, '\n' + currentIndent);
 
-        // Document 업데이트
-        this.#updateDocumentImmediate();
-
-        // 중간 줄로 커서 이동
-        setTimeout(() => {
-          this.#setCursorToLine(currentLineIndex + 1, newIndent.length);
-        }, 0);
-      }, 0);
+      // 중간 줄로 커서 이동 (다음 프레임에서 실행)
+      requestAnimationFrame(() => {
+        this.#setCursorToLine(currentLineIndex + 1, newIndent.length);
+      });
 
       return;
     }
@@ -344,11 +484,13 @@ export default class EditorPane extends EventEmitter {
     if (beforeTrimmed.endsWith('{') || beforeTrimmed.endsWith('(') || beforeTrimmed.endsWith('[')) {
       const newIndent = currentIndent + '  ';
       window.document.execCommand('insertText', false, '\n' + newIndent);
+      // execCommand는 자동으로 input 이벤트를 발생시킴
       return;
     }
 
     // 일반 Enter: 현재 들여쓰기 유지
     window.document.execCommand('insertText', false, '\n' + currentIndent);
+    // execCommand는 자동으로 input 이벤트를 발생시킴
   }
 
   /**
@@ -368,22 +510,27 @@ export default class EditorPane extends EventEmitter {
 
     // 다음 문자가 따옴표나 공백이면 자동 닫기
     if (!afterCursor || /^[\s"'`]/.test(afterCursor)) {
-      const selection = window.getSelection();
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
+      // execCommand를 사용하여 undo 스택 유지
+      window.document.execCommand('insertText', false, _openQuote + closeQuote);
 
-        // 열기 + 닫기 괄호 삽입
-        const textNode = window.document.createTextNode(_openQuote + closeQuote);
-        range.insertNode(textNode);
+      // 커서를 괄호 사이로 이동
+      setTimeout(() => {
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0);
+          const textNode = range.startContainer;
 
-        // 커서를 괄호 사이로 이동
-        range.setStart(textNode, 1);
-        range.setEnd(textNode, 1);
-        selection.removeAllRanges();
-        selection.addRange(range);
-
-        this.#updateDocumentImmediate();
-      }
+          if (textNode.nodeType === Node.TEXT_NODE) {
+            const offset = range.startOffset - 1;
+            if (offset >= 0) {
+              range.setStart(textNode, offset);
+              range.setEnd(textNode, offset);
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
+          }
+        }
+      }, 0);
     } else {
       window.document.execCommand('insertText', false, _openQuote);
     }
@@ -444,22 +591,27 @@ export default class EditorPane extends EventEmitter {
 
     // 다음 문자가 닫는 괄호나 공백이면 자동 닫기
     if (!afterCursor || /^[\s\)\}\]]/.test(afterCursor)) {
-      const selection = window.getSelection();
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
+      // execCommand를 사용하여 undo 스택 유지
+      window.document.execCommand('insertText', false, _openBracket + closeBracket);
 
-        // 열기 + 닫기 괄호 삽입
-        const textNode = window.document.createTextNode(_openBracket + closeBracket);
-        range.insertNode(textNode);
+      // 커서를 괄호 사이로 이동
+      setTimeout(() => {
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0);
+          const textNode = range.startContainer;
 
-        // 커서를 괄호 사이로 이동
-        range.setStart(textNode, 1);
-        range.setEnd(textNode, 1);
-        selection.removeAllRanges();
-        selection.addRange(range);
-
-        this.#updateDocumentImmediate();
-      }
+          if (textNode.nodeType === Node.TEXT_NODE) {
+            const offset = range.startOffset - 1;
+            if (offset >= 0) {
+              range.setStart(textNode, offset);
+              range.setEnd(textNode, offset);
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
+          }
+        }
+      }, 0);
     } else {
       window.document.execCommand('insertText', false, _openBracket);
     }
@@ -511,6 +663,7 @@ export default class EditorPane extends EventEmitter {
     const text = _e.clipboardData.getData('text/plain');
     if (!text) return;
     window.document.execCommand('insertText', false, text);
+    // execCommand는 자동으로 input 이벤트를 발생시키므로 별도 렌더링 불필요
   }
 
   /**
@@ -682,9 +835,7 @@ export default class EditorPane extends EventEmitter {
     this.content_el.innerHTML = html;
     this.content_el.contentEditable = 'true';
 
-    // setTimeout(() => {
     this.#updateActiveLine();
-    // }, 0);
   }
 
   /**
@@ -785,30 +936,23 @@ export default class EditorPane extends EventEmitter {
       prefix = prefixMatch[0];
     }
 
-    // Selection API로 직접 삽입
+    // Selection API를 사용하여 접두사 삭제
     const selection = window.getSelection();
     if (selection.rangeCount === 0) return;
 
     const range = selection.getRangeAt(0);
 
-    // 접두사 삭제
+    // 접두사 삭제 후 새 텍스트 삽입
     if (prefix.length > 0) {
+      // 접두사 선택
       range.setStart(range.startContainer, range.startOffset - prefix.length);
-      range.deleteContents();
+      selection.removeAllRanges();
+      selection.addRange(range);
     }
 
-    // 새 텍스트 삽입
-    const textNode = window.document.createTextNode(_completion.insertText);
-    range.insertNode(textNode);
-
-    // 커서를 삽입된 텍스트 끝으로 이동
-    range.setStartAfter(textNode);
-    range.setEndAfter(textNode);
-    selection.removeAllRanges();
-    selection.addRange(range);
-
-    // Document 업데이트
-    this.#updateDocumentImmediate();
+    // execCommand를 사용하여 undo 스택 유지
+    window.document.execCommand('insertText', false, _completion.insertText);
+    // execCommand는 자동으로 input 이벤트를 발생시킴
   }
 
   /**
