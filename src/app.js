@@ -175,6 +175,21 @@ class Application {
       this.controllers.editor.triggerCompletion();
     });
 
+    // Undo
+    this.keyBindings.register('ctrl+z', () => {
+      this.views.editorPane.undo();
+    });
+
+    // Redo (Ctrl+Y)
+    this.keyBindings.register('ctrl+y', () => {
+      this.views.editorPane.redo();
+    });
+
+    // Redo (Ctrl+Shift+Z - alternative)
+    this.keyBindings.register('ctrl+shift+z', () => {
+      this.views.editorPane.redo();
+    });
+
     console.log('⌨️ 키보드 단축키 등록 완료:', this.keyBindings.getBindings());
   }
 

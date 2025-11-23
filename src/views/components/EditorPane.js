@@ -6,6 +6,7 @@
 import EventEmitter from '../../utils/EventEmitter.js';
 import SyntaxRenderer from '../renderers/SyntaxRenderer.js';
 import VirtualScroller from '../renderers/VirtualScroller.js';
+import HistoryService from '../../services/HistoryService.js';
 
 export default class EditorPane extends EventEmitter {
   constructor(_containerId) {
@@ -32,6 +33,9 @@ export default class EditorPane extends EventEmitter {
 
     // 실시간 렌더링
     this.render_debounce_timeout = null;
+
+    // NEW: History service for undo/redo
+    this.history_service = new HistoryService();
 
     this.#initialize();
   }
@@ -214,7 +218,7 @@ export default class EditorPane extends EventEmitter {
 
     // 렌더링
     this.is_rendering = true;
-    // this.#renderAllLines();
+    this.#renderAllLines();
     this.is_rendering = false;
 
     // 커서 위치 복원
@@ -704,6 +708,13 @@ export default class EditorPane extends EventEmitter {
     this.is_rendering = false;
 
     if (_document) {
+      // Connect HistoryService to document
+      _document.setHistoryService(this.history_service);
+      this.history_service.clear(); // Clear history for new file
+
+      // Record initial state
+      this.history_service.recordState(_document.getState());
+
       const lineCount = _document.getLineCount();
       this.use_virtual_scrolling = lineCount >= this.virtual_scrolling_threshold;
 
@@ -1092,5 +1103,43 @@ export default class EditorPane extends EventEmitter {
 
   getDocument() {
     return this.document;
+  }
+
+  /**
+   * Undo last operation
+   */
+  undo() {
+    if (!this.document || !this.history_service.canUndo()) return;
+
+    const snapshot = this.history_service.undo();
+    if (snapshot) {
+      this.document.setState(snapshot, false); // false = don't record to history
+    }
+  }
+
+  /**
+   * Redo last undone operation
+   */
+  redo() {
+    if (!this.document || !this.history_service.canRedo()) return;
+
+    const snapshot = this.history_service.redo();
+    if (snapshot) {
+      this.document.setState(snapshot, false); // false = don't record to history
+    }
+  }
+
+  /**
+   * Check if undo is available
+   */
+  canUndo() {
+    return this.history_service.canUndo();
+  }
+
+  /**
+   * Check if redo is available
+   */
+  canRedo() {
+    return this.history_service.canRedo();
   }
 }
