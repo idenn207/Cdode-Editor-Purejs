@@ -39,8 +39,8 @@ export default class EditorPane extends EventEmitter {
   #initialize() {
     this.container.innerHTML = `
       <div class="editor-pane">
-        <div class="line-numbers"></div>
         <div class="editor-content-wrapper">
+          <div class="line-numbers"></div>
           <div class="editor-content" contenteditable="true" spellcheck="false"></div>
         </div>
       </div>
